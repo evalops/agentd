@@ -9,21 +9,30 @@ This is the desktop component of the work tracked in
 
 ## What it does (v0)
 
-- Captures the active display via `ScreenCaptureKit` at an adaptive 0.2–1 fps.
+- Captures the active display via `ScreenCaptureKit` at an adaptive 0.2–1 fps;
+  input idle time drops cadence to `idleFps` and activity restores
+  `captureFps`.
 - Reads `(bundleId, windowTitle, documentPath)` per frame via the Accessibility
   API and `NSWorkspace`.
 - Runs Apple Vision OCR on-device.
-- Drops near-duplicate frames via 64-bit pHash (Hamming ≤ 5).
-- Fail-closed `SecretScrubber` against AWS / GCP / SSH / JWT / GitHub /
-  Anthropic / OpenAI / Slack / Stripe markers — match → frame dropped, never
-  partial-redacted.
+- Drops near-duplicate frames via a 64-bit pHash ring buffer (Hamming ≤ 5).
+- Fail-closed `SecretScrubber` against AWS / GCP / SSH / JWT / GitHub classic
+  and fine-grained tokens / Google API keys / npm / SendGrid / DigitalOcean /
+  Azure storage keys / Mailgun / Twilio / Discord / Anthropic / OpenAI / Slack /
+  Stripe markers — match → frame dropped, never partial-redacted.
 - Per-app allow/deny list and per-path deny list.
 - Window-title pause patterns (Zoom, FaceTime, 1Password…).
+- Secret scanning covers OCR text, window titles, and document paths before a
+  frame is batched.
+- OCR text is scrubbed at full length, then capped to `maxOcrTextChars`
+  (default 4096) with `ocrTextTruncated` set when the cap applies.
 - Batches every 30s or 24 frames, whichever first.
 - Local-only mode persists batches under `~/.evalops/agentd/batches/` as
-  `0o600` JSON; HTTP mode `POST`s a Connect/proto JSON `SubmitBatchRequest`
-  to `chronicle.v1.ChronicleService.SubmitBatch` and falls back to local on
-  failure.
+  `0o600` JSON and sweeps old or over-budget batches; HTTP mode `POST`s a
+  Connect/proto JSON `SubmitBatchRequest` to
+  `chronicle.v1.ChronicleService.SubmitBatch` and falls back to local on
+  failure. Remote HTTP is allowed only for loopback development; non-loopback
+  remote endpoints must use HTTPS and configured client auth.
 - Menu-bar UI: pause/resume (`⌃⌥⌘P`), flush now (`⌃⌥⌘F`), reveal batches dir,
   quit.
 
@@ -38,6 +47,45 @@ swift test
 First run will trigger the system Screen Recording and Accessibility prompts the
 first time the gated APIs are called. Grant both in System Settings → Privacy &
 Security and relaunch.
+
+## Configuration
+
+agentd reads and writes `~/.evalops/agentd/config.json`. Important defaults:
+
+- `localOnly: true`
+- `captureFps: 1.0`
+- `idleFps: 0.2`
+- `idleThresholdSeconds: 60`
+- `batchIntervalSeconds: 30`
+- `maxFramesPerBatch: 24`
+- `maxOcrTextChars: 4096`
+- `maxBatchAgeDays: 7`
+- `maxBatchBytes: 536870912`
+- `auth: { "mode": "none" }`
+
+Remote mode requires `localOnly: false`, an HTTPS or loopback endpoint, and an
+auth mode. Bearer auth references a Keychain item:
+
+```json
+{
+  "auth": {
+    "mode": "bearer",
+    "keychainService": "dev.evalops.agentd",
+    "keychainAccount": "chronicle"
+  }
+}
+```
+
+mTLS auth references a Keychain identity label:
+
+```json
+{
+  "auth": {
+    "mode": "mtls",
+    "identityLabel": "agentd Chronicle client"
+  }
+}
+```
 
 ## What's next
 
@@ -72,4 +120,5 @@ Tests/agentdTests/        # SecretScrubber + path policy
 
 ## License
 
-Business Source License 1.1. See `LICENSE` for the current terms.
+Business Source License 1.1. See `LICENSE` and `LICENSING.md` for the current
+terms.
