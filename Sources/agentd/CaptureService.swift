@@ -5,7 +5,7 @@ import CoreGraphics
 import CoreImage
 import CoreVideo
 import Foundation
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 
 struct CapturedFrame: Sendable {
   let timestamp: Date
