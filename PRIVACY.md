@@ -60,6 +60,13 @@ are resolved from Keychain. They are not stored in `config.json`. mTLS identitie
 are resolved from Keychain by label and attached through URLSession client
 certificate authentication.
 
+When `secretBroker` is configured, agentd first calls the Secret Broker
+`/v1/artifacts:wrap` route with the frame batch in the
+`chronicle_frame_batch_json` secret-data field. Chronicle then receives only the
+broker `artifact_id`, `grant_id`, and session token needed to unwrap the batch on
+the Platform side. If wrapping or Chronicle submission fails, local fallback
+stores the original inline batch JSON and omits broker session-token fields.
+
 ## Drop And Scrub Behavior
 
 agentd drops a frame before batching when:

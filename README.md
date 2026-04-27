@@ -7,7 +7,7 @@ events for `cmd/chronicle` in `evalops/platform`.
 This is the desktop component of the work tracked in
 [evalops/platform#1075](https://github.com/evalops/platform/issues/1075).
 
-## What it does (v0)
+## What it does
 
 - Captures the active display via `ScreenCaptureKit` at an adaptive 0.2–1 fps;
   input idle time drops cadence to `idleFps` and activity restores
@@ -33,6 +33,9 @@ This is the desktop component of the work tracked in
   `chronicle.v1.ChronicleService.SubmitBatch` and falls back to local on
   failure. Remote HTTP is allowed only for loopback development; non-loopback
   remote endpoints must use HTTPS and configured client auth.
+- Optional Secret Broker mode wraps the frame batch into a broker artifact
+  (`chronicle_frame_batch_json`) first, then sends only the artifact/session
+  reference to Chronicle so Platform can unwrap, meter, and revoke through ASB.
 - Menu-bar UI: pause/resume (`⌃⌥⌘P`), flush now (`⌃⌥⌘F`), reveal batches dir,
   quit.
 
@@ -87,13 +90,29 @@ mTLS auth references a Keychain identity label:
 }
 ```
 
+Secret Broker artifact mode adds a second endpoint plus a Keychain-backed
+session token reference. The endpoint is the Secret Broker HTTP
+`/v1/artifacts:wrap` route:
+
+```json
+{
+  "secretBroker": {
+    "endpoint": "https://secret-broker.example.com/v1/artifacts:wrap",
+    "sessionTokenKeychainService": "dev.evalops.agentd",
+    "sessionTokenKeychainAccount": "secret-broker",
+    "ttlSeconds": 300
+  }
+}
+```
+
+If wrapping fails, agentd persists the original inline `SubmitBatchRequest`
+locally and does not write the broker session token to disk.
+
 ## What's next
 
 - Consume generated `chronicle.v1` Swift types when the platform SDK publishes
   them
   ([evalops/platform#1078](https://github.com/evalops/platform/issues/1078)).
-- ASB artifact upload path
-  ([evalops/platform#1084](https://github.com/evalops/platform/issues/1084)).
 - Calendar / Zoom auto-pause via NATS subject
   `chronicle.policy.pause` (siphon-fed).
 - Encryption-at-rest option for local batches.

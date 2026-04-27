@@ -10,6 +10,7 @@ actor Submitter {
   private let localOnly: Bool
   private let client: any HTTPClient
   private let auth: ResolvedSubmitterAuth
+  private let secretBroker: ResolvedSecretBrokerConfig?
   private let batchDirectory: URL
   private let maxBatchBytes: Int64
   private let maxBatchAgeDays: Double
@@ -18,6 +19,7 @@ actor Submitter {
     endpoint: URL,
     localOnly: Bool,
     authMode: AuthMode = .none,
+    secretBroker: SecretBrokerConfig? = nil,
     credentialProvider: any SubmitterCredentialProviding = KeychainCredentialProvider(),
     session: URLSession? = nil,
     client: (any HTTPClient)? = nil,
@@ -31,10 +33,23 @@ actor Submitter {
     guard localOnly || authMode != .none else {
       throw SubmitterInitError.missingRemoteAuth
     }
+    if let secretBroker, !localOnly {
+      guard EndpointPolicy.isAllowed(endpoint: secretBroker.endpoint, localOnly: false) else {
+        throw SubmitterInitError.insecureRemoteEndpoint(secretBroker.endpoint.absoluteString)
+      }
+    }
 
     self.endpoint = endpoint
     self.localOnly = localOnly
     self.auth = try ResolvedSubmitterAuth(mode: authMode, credentialProvider: credentialProvider)
+    if let secretBroker, !localOnly {
+      self.secretBroker = try ResolvedSecretBrokerConfig(
+        config: secretBroker,
+        credentialProvider: credentialProvider
+      )
+    } else {
+      self.secretBroker = nil
+    }
     self.batchDirectory =
       batchDirectory
       ?? FileManager.default.homeDirectoryForCurrentUser
@@ -73,27 +88,48 @@ actor Submitter {
 
   @discardableResult
   func submit(_ batch: Batch) async -> SubmitResult {
-    let data: Data
+    let fallbackData: Data
     do {
-      data = try encodeSubmitBatchRequest(batch, localOnly: localOnly)
+      fallbackData = try encodeSubmitBatchRequest(batch, localOnly: localOnly)
     } catch {
       Log.submit.error("batch encode failed id=\(batch.batchId, privacy: .public)")
       return .failed
     }
 
     if localOnly {
-      await persistLocal(batch.batchId, data: data)
+      await persistLocal(batch.batchId, data: fallbackData)
       return .persistedLocal
     }
 
-    let req = makeRequest(body: data)
+    let submitData: Data
+    if let secretBroker {
+      do {
+        let wrapped = try await wrapFrameBatch(batch, using: secretBroker)
+        submitData = try encodeBrokerSubmitBatchRequest(
+          sessionToken: secretBroker.sessionToken,
+          artifactId: wrapped.artifactId,
+          grantId: wrapped.grantId,
+          localOnly: localOnly
+        )
+      } catch {
+        Log.submit.warning(
+          "secret broker wrap failed batch=\(batch.batchId, privacy: .public) error=\(error.localizedDescription, privacy: .public) — falling back to local"
+        )
+        await persistLocal(batch.batchId, data: fallbackData)
+        return .persistedLocal
+      }
+    } else {
+      submitData = fallbackData
+    }
+
+    let req = makeRequest(body: submitData)
     do {
       let (body, resp) = try await client.data(for: req)
       if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
         Log.submit.warning(
           "submit status=\(http.statusCode, privacy: .public) batch=\(batch.batchId, privacy: .public) — falling back to local"
         )
-        await persistLocal(batch.batchId, data: data)
+        await persistLocal(batch.batchId, data: fallbackData)
         return .persistedLocal
       } else {
         let response: SubmitBatchResponse?
@@ -106,7 +142,7 @@ actor Submitter {
             Log.submit.warning(
               "submit malformed response batch=\(batch.batchId, privacy: .public) — falling back to local"
             )
-            await persistLocal(batch.batchId, data: data)
+            await persistLocal(batch.batchId, data: fallbackData)
             return .persistedLocal
           }
         }
@@ -119,7 +155,7 @@ actor Submitter {
     } catch {
       Log.submit.warning(
         "submit error \(error.localizedDescription, privacy: .public) — falling back to local")
-      await persistLocal(batch.batchId, data: data)
+      await persistLocal(batch.batchId, data: fallbackData)
       return .persistedLocal
     }
   }
@@ -134,6 +170,51 @@ actor Submitter {
     }
     req.httpBody = body
     return req
+  }
+
+  private func makeSecretBrokerRequest(endpoint: URL, body: Data) -> URLRequest {
+    var req = URLRequest(url: endpoint)
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.httpBody = body
+    return req
+  }
+
+  private func wrapFrameBatch(
+    _ batch: Batch,
+    using secretBroker: ResolvedSecretBrokerConfig
+  ) async throws -> WrappedArtifact {
+    let payload = try encodeFrameBatch(batch)
+    guard let payloadJSON = String(data: payload, encoding: .utf8) else {
+      throw SubmitterError.invalidBatchPayload
+    }
+    let request = WrapArtifactRequest(
+      sessionToken: secretBroker.sessionToken,
+      tool: secretBroker.tool,
+      capability: secretBroker.capability,
+      resourceRef: "chronicle://\(batch.organizationId)/\(batch.deviceId)/\(batch.batchId)",
+      ttlSeconds: secretBroker.ttlSeconds,
+      reason: secretBroker.reason,
+      secretData: ["chronicle_frame_batch_json": payloadJSON],
+      metadata: [
+        "batch_id": batch.batchId,
+        "device_id": batch.deviceId,
+        "organization_id": batch.organizationId,
+        "source": "agentd",
+      ]
+    )
+    let data = try encodeWrapArtifactRequest(request)
+    let (body, resp) = try await client.data(
+      for: makeSecretBrokerRequest(endpoint: secretBroker.endpoint, body: data)
+    )
+    if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+      throw SubmitterError.secretBrokerStatus(http.statusCode)
+    }
+    let wrapped = try JSONDecoder().decode(WrapArtifactResponse.self, from: body)
+    guard !wrapped.artifactId.isEmpty, !wrapped.grantId.isEmpty else {
+      throw SubmitterError.malformedSecretBrokerResponse
+    }
+    return WrappedArtifact(artifactId: wrapped.artifactId, grantId: wrapped.grantId)
   }
 
   private func persistLocal(_ id: String, data: Data) async {
@@ -359,8 +440,25 @@ private final class MTLSURLSessionDelegate: NSObject, URLSessionDelegate, @unche
 }
 
 struct SubmitBatchRequest: Sendable, Codable {
-  let batch: Batch
+  let batch: Batch?
   let localOnly: Bool
+  let secretBrokerSessionToken: String?
+  let secretBrokerArtifactId: String?
+  let secretBrokerGrantId: String?
+
+  init(
+    batch: Batch? = nil,
+    localOnly: Bool,
+    secretBrokerSessionToken: String? = nil,
+    secretBrokerArtifactId: String? = nil,
+    secretBrokerGrantId: String? = nil
+  ) {
+    self.batch = batch
+    self.localOnly = localOnly
+    self.secretBrokerSessionToken = secretBrokerSessionToken
+    self.secretBrokerArtifactId = secretBrokerArtifactId
+    self.secretBrokerGrantId = secretBrokerGrantId
+  }
 }
 
 struct SubmitBatchResponse: Sendable, Codable, Equatable {
@@ -377,9 +475,127 @@ enum SubmitResult: Sendable, Equatable {
   case failed
 }
 
+enum SubmitterError: Error, LocalizedError {
+  case invalidBatchPayload
+  case secretBrokerStatus(Int)
+  case malformedSecretBrokerResponse
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidBatchPayload:
+      return "frame batch could not be encoded as UTF-8 JSON"
+    case .secretBrokerStatus(let status):
+      return "secret broker wrap returned HTTP \(status)"
+    case .malformedSecretBrokerResponse:
+      return "secret broker wrap response did not include artifact and grant ids"
+    }
+  }
+}
+
+struct ResolvedSecretBrokerConfig: Sendable, Equatable {
+  let endpoint: URL
+  let sessionToken: String
+  let ttlSeconds: Int
+  let tool: String
+  let capability: String
+  let reason: String
+
+  init(
+    config: SecretBrokerConfig,
+    credentialProvider: any SubmitterCredentialProviding
+  ) throws {
+    let sessionToken = try credentialProvider.bearerToken(
+      service: config.sessionTokenKeychainService,
+      account: config.sessionTokenKeychainAccount
+    )
+    guard !sessionToken.isEmpty else {
+      throw SubmitterInitError.missingBearerToken(
+        service: config.sessionTokenKeychainService,
+        account: config.sessionTokenKeychainAccount
+      )
+    }
+    self.endpoint = config.endpoint
+    self.sessionToken = sessionToken
+    self.ttlSeconds = config.ttlSeconds
+    self.tool = config.tool
+    self.capability = config.capability
+    self.reason = config.reason
+  }
+}
+
+struct WrappedArtifact: Sendable, Equatable {
+  let artifactId: String
+  let grantId: String
+}
+
+struct WrapArtifactRequest: Sendable, Codable {
+  let sessionToken: String
+  let tool: String
+  let capability: String
+  let resourceRef: String
+  let ttlSeconds: Int
+  let reason: String
+  let secretData: [String: String]
+  let metadata: [String: String]
+
+  enum CodingKeys: String, CodingKey {
+    case sessionToken = "session_token"
+    case tool
+    case capability
+    case resourceRef = "resource_ref"
+    case ttlSeconds = "ttl_seconds"
+    case reason
+    case secretData = "secret_data"
+    case metadata
+  }
+}
+
+struct WrapArtifactResponse: Sendable, Codable, Equatable {
+  let grantId: String
+  let artifactId: String
+
+  enum CodingKeys: String, CodingKey {
+    case grantId = "grant_id"
+    case artifactId = "artifact_id"
+  }
+}
+
 func encodeSubmitBatchRequest(_ batch: Batch, localOnly: Bool) throws -> Data {
+  try encodeSubmitBatchRequest(SubmitBatchRequest(batch: batch, localOnly: localOnly))
+}
+
+func encodeBrokerSubmitBatchRequest(
+  sessionToken: String,
+  artifactId: String,
+  grantId: String,
+  localOnly: Bool
+) throws -> Data {
+  try encodeSubmitBatchRequest(
+    SubmitBatchRequest(
+      localOnly: localOnly,
+      secretBrokerSessionToken: sessionToken,
+      secretBrokerArtifactId: artifactId,
+      secretBrokerGrantId: grantId
+    ))
+}
+
+private func encodeSubmitBatchRequest(_ request: SubmitBatchRequest) throws -> Data {
   let enc = JSONEncoder()
   enc.dateEncodingStrategy = .iso8601
   enc.outputFormatting = [.sortedKeys]
-  return try enc.encode(SubmitBatchRequest(batch: batch, localOnly: localOnly))
+  return try enc.encode(request)
+}
+
+func encodeFrameBatch(_ batch: Batch) throws -> Data {
+  let enc = JSONEncoder()
+  enc.dateEncodingStrategy = .iso8601
+  enc.outputFormatting = [.sortedKeys]
+  return try enc.encode(batch)
+}
+
+func encodeWrapArtifactRequest(_ request: WrapArtifactRequest) throws -> Data {
+  let enc = JSONEncoder()
+  enc.dateEncodingStrategy = .iso8601
+  enc.outputFormatting = [.sortedKeys]
+  return try enc.encode(request)
 }
