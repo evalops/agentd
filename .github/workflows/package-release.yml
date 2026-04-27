@@ -1,0 +1,115 @@
+name: package-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_name:
+        description: Artifact name prefix
+        required: false
+        default: agentd
+      configuration:
+        description: Swift build configuration
+        required: false
+        default: release
+
+permissions:
+  contents: read
+
+jobs:
+  package-release:
+    name: package release
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Select Swift 6 toolchain
+        run: |
+          set -euo pipefail
+          for xcode in \
+            /Applications/Xcode_16.2.app \
+            /Applications/Xcode_16.1.app \
+            /Applications/Xcode_16.0.app \
+            /Applications/Xcode.app
+          do
+            if [ -d "$xcode" ]; then
+              sudo xcode-select -s "$xcode"
+              break
+            fi
+          done
+          swift --version
+
+      - name: Require release secrets
+        env:
+          AGENTD_CODESIGN_CERTIFICATE_P12: ${{ secrets.AGENTD_CODESIGN_CERTIFICATE_P12 }}
+          AGENTD_CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.AGENTD_CODESIGN_CERTIFICATE_PASSWORD }}
+          AGENTD_CODESIGN_IDENTITY: ${{ secrets.AGENTD_CODESIGN_IDENTITY }}
+          AGENTD_NOTARY_APPLE_ID: ${{ secrets.AGENTD_NOTARY_APPLE_ID }}
+          AGENTD_NOTARY_TEAM_ID: ${{ secrets.AGENTD_NOTARY_TEAM_ID }}
+          AGENTD_NOTARY_PASSWORD: ${{ secrets.AGENTD_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            AGENTD_CODESIGN_CERTIFICATE_P12 \
+            AGENTD_CODESIGN_CERTIFICATE_PASSWORD \
+            AGENTD_CODESIGN_IDENTITY \
+            AGENTD_NOTARY_APPLE_ID \
+            AGENTD_NOTARY_TEAM_ID \
+            AGENTD_NOTARY_PASSWORD
+          do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required secret $name"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Import Developer ID certificate
+        env:
+          AGENTD_CODESIGN_CERTIFICATE_P12: ${{ secrets.AGENTD_CODESIGN_CERTIFICATE_P12 }}
+          AGENTD_CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.AGENTD_CODESIGN_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/agentd-signing.keychain-db"
+          cert="$RUNNER_TEMP/agentd-codesign.p12"
+          echo "$AGENTD_CODESIGN_CERTIFICATE_P12" | base64 --decode > "$cert"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security import "$cert" \
+            -k "$keychain" \
+            -P "$AGENTD_CODESIGN_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$keychain"
+
+      - name: Build, sign, notarize, and staple
+        env:
+          CONFIGURATION: ${{ inputs.configuration }}
+          AGENTD_CODESIGN_IDENTITY: ${{ secrets.AGENTD_CODESIGN_IDENTITY }}
+          AGENTD_NOTARY_APPLE_ID: ${{ secrets.AGENTD_NOTARY_APPLE_ID }}
+          AGENTD_NOTARY_TEAM_ID: ${{ secrets.AGENTD_NOTARY_TEAM_ID }}
+          AGENTD_NOTARY_PASSWORD: ${{ secrets.AGENTD_NOTARY_PASSWORD }}
+        run: scripts/package_app.sh
+
+      - name: Record checksums
+        run: |
+          set -euo pipefail
+          shasum -a 256 "dist/EvalOps agentd.app/Contents/MacOS/agentd" "dist/agentd.zip" | tee dist/SHA256SUMS
+          codesign -dvvv --entitlements :- "dist/EvalOps agentd.app" > dist/codesign.txt 2>&1
+          spctl -a -t exec -vv "dist/EvalOps agentd.app" > dist/spctl.txt 2>&1
+
+      - name: Upload notarized artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}-${{ github.sha }}
+          path: |
+            dist/EvalOps agentd.app
+            dist/agentd.zip
+            dist/SHA256SUMS
+            dist/codesign.txt
+            dist/spctl.txt
+          if-no-files-found: error
