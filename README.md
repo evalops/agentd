@@ -21,8 +21,8 @@ This is the desktop component of the work tracked in
 - Window-title pause patterns (Zoom, FaceTime, 1Password…).
 - Batches every 30s or 24 frames, whichever first.
 - Local-only mode persists batches under `~/.evalops/agentd/batches/` as
-  `0o600` JSON; HTTP mode `POST`s to
-  `chronicle.v1.ChronicleService.SubmitBatch` and falls back to local on
+  `0o600` JSON; HTTP mode `POST`s a Connect/proto JSON `SubmitBatchRequest`
+  to `chronicle.v1.ChronicleService.SubmitBatch` and falls back to local on
   failure.
 - Menu-bar UI: pause/resume (`⌃⌥⌘P`), flush now (`⌃⌥⌘F`), reveal batches dir,
   quit.
@@ -41,11 +41,11 @@ Security and relaunch.
 
 ## What's next
 
-- Replace local FNV-1a-based `frameHash` with real SHA-256 via CryptoKit.
-- Wire to `chronicle.v1` when proto/codegen lands
-  ([evalops/platform#1076](https://github.com/evalops/platform/issues/1076)).
+- Consume generated `chronicle.v1` Swift types when the platform SDK publishes
+  them
+  ([evalops/platform#1078](https://github.com/evalops/platform/issues/1078)).
 - ASB artifact upload path
-  ([evalops/platform#1082](https://github.com/evalops/platform/issues/1082)).
+  ([evalops/platform#1084](https://github.com/evalops/platform/issues/1084)).
 - Calendar / Zoom auto-pause via NATS subject
   `chronicle.policy.pause` (siphon-fed).
 - Encryption-at-rest option for local batches.
