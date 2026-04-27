@@ -60,6 +60,20 @@ notarize and staple the bundle, either set `AGENTD_NOTARY_PROFILE` for a
 notarytool keychain profile or set `AGENTD_NOTARY_APPLE_ID`,
 `AGENTD_NOTARY_TEAM_ID`, and `AGENTD_NOTARY_PASSWORD`.
 
+The `package-release` GitHub Actions workflow performs the credential-backed
+release path and uploads the stapled app, archive, checksums, codesign details,
+and Gatekeeper assessment. Configure these repository secrets before dispatching
+it:
+
+- `AGENTD_CODESIGN_CERTIFICATE_P12`: base64-encoded Developer ID Application
+  `.p12`.
+- `AGENTD_CODESIGN_CERTIFICATE_PASSWORD`: password for that `.p12`.
+- `AGENTD_CODESIGN_IDENTITY`: codesign identity name, for example
+  `Developer ID Application: Example, Inc. (TEAMID)`.
+- `AGENTD_NOTARY_APPLE_ID`
+- `AGENTD_NOTARY_TEAM_ID`
+- `AGENTD_NOTARY_PASSWORD`: app-specific password for notarization.
+
 ## Configuration
 
 agentd reads and writes `~/.evalops/agentd/config.json`. Important defaults:
