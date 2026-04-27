@@ -93,6 +93,43 @@ final class SubmitterTests: XCTestCase {
     XCTAssertEqual(cfg.organizationId, "org_new")
   }
 
+  func testAgentConfigDecodesSecretBroker() throws {
+    let data = """
+      {
+        "deviceId": "device_1",
+        "organizationId": "org_1",
+        "endpoint": "https://chronicle.example.com/chronicle.v1.ChronicleService/SubmitBatch",
+        "localOnly": false,
+        "auth": {
+          "mode": "bearer",
+          "keychainService": "agentd",
+          "keychainAccount": "chronicle"
+        },
+        "secretBroker": {
+          "endpoint": "https://secret-broker.example.com/v1/artifacts:wrap",
+          "sessionTokenKeychainService": "agentd",
+          "sessionTokenKeychainAccount": "secret-broker",
+          "ttlSeconds": 120
+        }
+      }
+      """.data(using: .utf8)!
+
+    let cfg = try JSONDecoder().decode(AgentConfig.self, from: data)
+
+    XCTAssertEqual(
+      cfg.secretBroker?.endpoint,
+      URL(string: "https://secret-broker.example.com/v1/artifacts:wrap")!)
+    XCTAssertEqual(cfg.secretBroker?.sessionTokenKeychainService, "agentd")
+    XCTAssertEqual(cfg.secretBroker?.sessionTokenKeychainAccount, "secret-broker")
+    XCTAssertEqual(cfg.secretBroker?.ttlSeconds, 120)
+    XCTAssertEqual(cfg.secretBroker?.tool, "chronicle.agentd")
+    XCTAssertEqual(cfg.secretBroker?.capability, "chronicle.frame_batch")
+
+    let encoded = try JSONEncoder().encode(cfg)
+    let root = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    XCTAssertNotNil(root["secretBroker"])
+  }
+
   func testEndpointPolicyRejectsPlainHttpRemoteAndAllowsHttpsAndLoopback() throws {
     let provider = StubCredentialProvider(token: "token")
     XCTAssertNoThrow(
@@ -152,6 +189,129 @@ final class SubmitterTests: XCTestCase {
     let request = await submitter.makeRequest(body: Data("{}".utf8))
     XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret-token")
     XCTAssertEqual(request.value(forHTTPHeaderField: "Connect-Protocol-Version"), "1")
+  }
+
+  func testSecretBrokerWrapSubmitsArtifactReferenceToChronicle() async throws {
+    let recorder = RequestRecorder()
+    let client = StubHTTPClient { request in
+      await recorder.record(request)
+      let url = try XCTUnwrap(request.url)
+      let body = try XCTUnwrap(request.httpBody)
+      let root = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+
+      if url.host == "secret-broker.example.com" {
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertEqual(root["session_token"] as? String, "broker-session")
+        XCTAssertEqual(root["tool"] as? String, "chronicle.agentd")
+        XCTAssertEqual(root["capability"] as? String, "chronicle.frame_batch")
+        XCTAssertEqual(root["ttl_seconds"] as? Int, 300)
+
+        let secretData = try XCTUnwrap(root["secret_data"] as? [String: String])
+        let batchJSON = try XCTUnwrap(secretData["chronicle_frame_batch_json"])
+        let batchData = Data(batchJSON.utf8)
+        let batchRoot = try XCTUnwrap(
+          JSONSerialization.jsonObject(with: batchData) as? [String: Any])
+        XCTAssertEqual(batchRoot["batchId"] as? String, "batch_fixture")
+        XCTAssertEqual(batchRoot["organizationId"] as? String, "org_1")
+
+        let metadata = try XCTUnwrap(root["metadata"] as? [String: String])
+        XCTAssertEqual(metadata["source"], "agentd")
+        XCTAssertEqual(metadata["batch_id"], "batch_fixture")
+
+        let response = """
+          {
+            "grant_id": "grant_1",
+            "state": "issued",
+            "delivery": {"artifact_id": "art_1"},
+            "expires_at": "2026-04-27T00:00:00Z",
+            "artifact_id": "art_1"
+          }
+          """
+        return (Data(response.utf8), Self.response(for: url, statusCode: 200))
+      }
+
+      XCTAssertEqual(url.host, "chronicle.example.com")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer chronicle-token")
+      XCTAssertEqual(root["secretBrokerSessionToken"] as? String, "broker-session")
+      XCTAssertEqual(root["secretBrokerArtifactId"] as? String, "art_1")
+      XCTAssertEqual(root["secretBrokerGrantId"] as? String, "grant_1")
+      XCTAssertNil(root["batch"])
+
+      return (
+        Data(
+          #"{"batchId":"batch_fixture","artifactId":"art_1","acceptedFrameCount":1,"droppedFrameCount":0,"memoryIds":["mem_1"]}"#
+            .utf8),
+        Self.response(for: url, statusCode: 200)
+      )
+    }
+    let submitter = try Submitter(
+      endpoint: URL(
+        string: "https://chronicle.example.com/chronicle.v1.ChronicleService/SubmitBatch")!,
+      localOnly: false,
+      authMode: .bearer(keychainService: "agentd", keychainAccount: "chronicle"),
+      secretBroker: SecretBrokerConfig(
+        endpoint: URL(string: "https://secret-broker.example.com/v1/artifacts:wrap")!,
+        sessionTokenKeychainService: "agentd",
+        sessionTokenKeychainAccount: "secret-broker"
+      ),
+      credentialProvider: StubCredentialProvider(tokens: [
+        "agentd:chronicle": "chronicle-token",
+        "agentd:secret-broker": "broker-session",
+      ]),
+      client: client
+    )
+
+    let result = await submitter.submit(Self.batch())
+
+    XCTAssertEqual(
+      result,
+      .submitted(
+        SubmitBatchResponse(
+          batchId: "batch_fixture",
+          artifactId: "art_1",
+          acceptedFrameCount: 1,
+          droppedFrameCount: 0,
+          memoryIds: ["mem_1"]
+        )))
+    let requestCount = await recorder.count()
+    XCTAssertEqual(requestCount, 2)
+  }
+
+  func testSecretBrokerWrapFailurePersistsInlineBatchWithoutSessionToken() async throws {
+    let recorder = RequestRecorder()
+    let dir = try makeTemporaryDirectory()
+    let submitter = try Submitter(
+      endpoint: URL(
+        string: "https://chronicle.example.com/chronicle.v1.ChronicleService/SubmitBatch")!,
+      localOnly: false,
+      authMode: .bearer(keychainService: "agentd", keychainAccount: "chronicle"),
+      secretBroker: SecretBrokerConfig(
+        endpoint: URL(string: "https://secret-broker.example.com/v1/artifacts:wrap")!,
+        sessionTokenKeychainService: "agentd",
+        sessionTokenKeychainAccount: "secret-broker"
+      ),
+      credentialProvider: StubCredentialProvider(tokens: [
+        "agentd:chronicle": "chronicle-token",
+        "agentd:secret-broker": "broker-session",
+      ]),
+      client: StubHTTPClient { request in
+        await recorder.record(request)
+        return (Data(#"{"error":"nope"}"#.utf8), Self.response(for: request.url!, statusCode: 500))
+      },
+      batchDirectory: dir
+    )
+
+    let result = await submitter.submit(Self.batch())
+
+    XCTAssertEqual(result, .persistedLocal)
+    let requestCount = await recorder.count()
+    XCTAssertEqual(requestCount, 1)
+    let persisted = try Data(contentsOf: dir.appendingPathComponent("batch_fixture.json"))
+    let root = try XCTUnwrap(JSONSerialization.jsonObject(with: persisted) as? [String: Any])
+    XCTAssertNotNil(root["batch"])
+    XCTAssertNil(root["secretBrokerSessionToken"])
+    XCTAssertNil(root["secretBrokerArtifactId"])
+    XCTAssertNil(root["secretBrokerGrantId"])
   }
 
   func testSubmitterPersistsLocalOnServerAndTransportFailures() async throws {
@@ -270,13 +430,42 @@ final class SubmitterTests: XCTestCase {
     try Data(repeating: 0x41, count: bytes).write(to: url)
     try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
   }
+
+  fileprivate static func response(for url: URL, statusCode: Int) -> HTTPURLResponse {
+    HTTPURLResponse(
+      url: url,
+      statusCode: statusCode,
+      httpVersion: "HTTP/1.1",
+      headerFields: nil
+    )!
+  }
+}
+
+actor RequestRecorder {
+  private var requests: [URLRequest] = []
+
+  func record(_ request: URLRequest) {
+    requests.append(request)
+  }
+
+  func count() -> Int {
+    requests.count
+  }
 }
 
 struct StubCredentialProvider: SubmitterCredentialProviding {
-  let token: String
+  let tokens: [String: String]
+
+  init(token: String) {
+    self.tokens = ["svc:acct": token]
+  }
+
+  init(tokens: [String: String]) {
+    self.tokens = tokens
+  }
 
   func bearerToken(service: String, account: String) throws -> String {
-    token
+    tokens["\(service):\(account)"] ?? ""
   }
 
   func clientIdentity(label: String) throws -> ClientIdentity {
@@ -297,13 +486,7 @@ struct StubHTTPClient: HTTPClient {
 
   static func status(_ statusCode: Int, body: String) -> StubHTTPClient {
     StubHTTPClient { request in
-      let response = HTTPURLResponse(
-        url: request.url!,
-        statusCode: statusCode,
-        httpVersion: "HTTP/1.1",
-        headerFields: nil
-      )!
-      return (Data(body.utf8), response)
+      (Data(body.utf8), SubmitterTests.response(for: request.url!, statusCode: statusCode))
     }
   }
 

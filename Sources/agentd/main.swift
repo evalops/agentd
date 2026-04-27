@@ -25,6 +25,7 @@ final class AppController {
         endpoint: cfg.endpoint,
         localOnly: cfg.localOnly,
         authMode: cfg.auth,
+        secretBroker: cfg.secretBroker,
         maxBatchBytes: cfg.maxBatchBytes,
         maxBatchAgeDays: cfg.maxBatchAgeDays
       )

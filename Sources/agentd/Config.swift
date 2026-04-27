@@ -75,6 +75,7 @@ struct AgentConfig: Codable, Sendable {
   var idlePollSeconds: Double
   var localOnly: Bool
   var auth: AuthMode
+  var secretBroker: SecretBrokerConfig?
 
   enum CodingKeys: String, CodingKey {
     case deviceId
@@ -100,6 +101,7 @@ struct AgentConfig: Codable, Sendable {
     case idlePollSeconds
     case localOnly
     case auth
+    case secretBroker
   }
 
   init(
@@ -124,7 +126,8 @@ struct AgentConfig: Codable, Sendable {
     idleThresholdSeconds: Double = 60,
     idlePollSeconds: Double = 5,
     localOnly: Bool,
-    auth: AuthMode = .none
+    auth: AuthMode = .none,
+    secretBroker: SecretBrokerConfig? = nil
   ) {
     self.deviceId = deviceId
     self.organizationId = organizationId
@@ -148,6 +151,7 @@ struct AgentConfig: Codable, Sendable {
     self.idlePollSeconds = idlePollSeconds
     self.localOnly = localOnly
     self.auth = auth
+    self.secretBroker = secretBroker
   }
 
   init(from decoder: Decoder) throws {
@@ -188,6 +192,7 @@ struct AgentConfig: Codable, Sendable {
     idlePollSeconds = try container.decodeIfPresent(Double.self, forKey: .idlePollSeconds) ?? 5
     localOnly = try container.decodeIfPresent(Bool.self, forKey: .localOnly) ?? true
     auth = try container.decodeIfPresent(AuthMode.self, forKey: .auth) ?? .none
+    secretBroker = try container.decodeIfPresent(SecretBrokerConfig.self, forKey: .secretBroker)
   }
 
   func encode(to encoder: Encoder) throws {
@@ -214,6 +219,7 @@ struct AgentConfig: Codable, Sendable {
     try container.encode(idlePollSeconds, forKey: .idlePollSeconds)
     try container.encode(localOnly, forKey: .localOnly)
     try container.encode(auth, forKey: .auth)
+    try container.encodeIfPresent(secretBroker, forKey: .secretBroker)
   }
 
   static let defaultAllowedBundleIds: [String] = [
@@ -271,7 +277,67 @@ struct AgentConfig: Codable, Sendable {
       idleThresholdSeconds: 60,
       idlePollSeconds: 5,
       localOnly: true,
-      auth: .none
+      auth: .none,
+      secretBroker: nil
+    )
+  }
+}
+
+struct SecretBrokerConfig: Codable, Sendable, Equatable {
+  var endpoint: URL
+  var sessionTokenKeychainService: String
+  var sessionTokenKeychainAccount: String
+  var ttlSeconds: Int
+  var tool: String
+  var capability: String
+  var reason: String
+
+  enum CodingKeys: String, CodingKey {
+    case endpoint
+    case sessionTokenKeychainService
+    case sessionTokenKeychainAccount
+    case ttlSeconds
+    case tool
+    case capability
+    case reason
+  }
+
+  init(
+    endpoint: URL,
+    sessionTokenKeychainService: String,
+    sessionTokenKeychainAccount: String,
+    ttlSeconds: Int = 300,
+    tool: String = "chronicle.agentd",
+    capability: String = "chronicle.frame_batch",
+    reason: String = "agentd Chronicle frame batch"
+  ) {
+    self.endpoint = endpoint
+    self.sessionTokenKeychainService = sessionTokenKeychainService
+    self.sessionTokenKeychainAccount = sessionTokenKeychainAccount
+    self.ttlSeconds = ttlSeconds
+    self.tool = tool
+    self.capability = capability
+    self.reason = reason
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      endpoint: try container.decode(URL.self, forKey: .endpoint),
+      sessionTokenKeychainService: try container.decode(
+        String.self,
+        forKey: .sessionTokenKeychainService
+      ),
+      sessionTokenKeychainAccount: try container.decode(
+        String.self,
+        forKey: .sessionTokenKeychainAccount
+      ),
+      ttlSeconds: try container.decodeIfPresent(Int.self, forKey: .ttlSeconds) ?? 300,
+      tool: try container.decodeIfPresent(String.self, forKey: .tool) ?? "chronicle.agentd",
+      capability: try container.decodeIfPresent(String.self, forKey: .capability)
+        ?? "chronicle.frame_batch",
+      reason: try container.decodeIfPresent(String.self, forKey: .reason)
+        ?? "agentd Chronicle frame batch"
     )
   }
 }
