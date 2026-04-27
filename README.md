@@ -69,3 +69,7 @@ Sources/agentd/
 support/Info.plist        # injected via -sectcreate __TEXT __info_plist
 Tests/agentdTests/        # SecretScrubber + path policy
 ```
+
+## License
+
+Business Source License 1.1. See `LICENSE` for the current terms.
