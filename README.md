@@ -46,6 +46,7 @@ swift build
 swift run agentd       # foreground; menu-bar item appears
 swift test
 scripts/package_app.sh # release .app bundle with hardened runtime signing
+scripts/permission_smoke.sh --no-launch # generate permission-smoke evidence template
 ```
 
 First run will trigger the system Screen Recording and Accessibility prompts the
@@ -73,6 +74,11 @@ it:
 - `AGENTD_NOTARY_APPLE_ID`
 - `AGENTD_NOTARY_TEAM_ID`
 - `AGENTD_NOTARY_PASSWORD`: app-specific password for notarization.
+
+`scripts/permission_smoke.sh` packages the app when needed, records macOS
+version/checksum/codesign evidence in `dist/permission-smoke-report.md`, and
+opens the app unless `--no-launch` is supplied. Use it for the hardware-backed
+Screen Recording and Accessibility permission smoke.
 
 ## Configuration
 
