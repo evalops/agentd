@@ -45,11 +45,20 @@ This is the desktop component of the work tracked in
 swift build
 swift run agentd       # foreground; menu-bar item appears
 swift test
+scripts/package_app.sh # release .app bundle with hardened runtime signing
 ```
 
 First run will trigger the system Screen Recording and Accessibility prompts the
 first time the gated APIs are called. Grant both in System Settings → Privacy &
 Security and relaunch.
+
+`scripts/package_app.sh` creates `dist/EvalOps agentd.app` and
+`dist/agentd.zip`. By default CI uses ad-hoc signing with hardened runtime so
+the bundle shape and entitlements are continuously checked. For release signing,
+set `AGENTD_CODESIGN_IDENTITY` to a Developer ID Application identity. To
+notarize and staple the bundle, either set `AGENTD_NOTARY_PROFILE` for a
+notarytool keychain profile or set `AGENTD_NOTARY_APPLE_ID`,
+`AGENTD_NOTARY_TEAM_ID`, and `AGENTD_NOTARY_PASSWORD`.
 
 ## Configuration
 
@@ -116,7 +125,8 @@ locally and does not write the broker session token to disk.
 - Calendar / Zoom auto-pause via NATS subject
   `chronicle.policy.pause` (siphon-fed).
 - Encryption-at-rest option for local batches.
-- Notarized + hardened-runtime signed `.app` bundle.
+- Hardware-backed permission-flow smoke test for Screen Recording and
+  Accessibility prompts.
 
 ## Layout
 
