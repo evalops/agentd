@@ -223,6 +223,18 @@ actor Submitter {
       throw SubmitterError.invalidBatchPayload
     }
     var metadata = batch.metadata
+    for reservedKey in [
+      "batch_id",
+      "device_id",
+      "organization_id",
+      "workspace_id",
+      "user_id",
+      "project_id",
+      "repository",
+      "source",
+    ] {
+      metadata.removeValue(forKey: reservedKey)
+    }
     metadata["batch_id"] = batch.batchId
     metadata["device_id"] = batch.deviceId
     metadata["organization_id"] = batch.organizationId
