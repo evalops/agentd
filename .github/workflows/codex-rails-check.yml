@@ -15,6 +15,6 @@ permissions:
 
 jobs:
   validate:
-    uses: evalops/.github/.github/workflows/codex-rails-check.yml@a51e5155fa81f5722475a390c4110362167c821c
+    uses: evalops/.github/.github/workflows/codex-rails-check.yml@0944b072407d5cdd9447e8262661e5929bc1a4d4
     with:
       require_agents: true
