@@ -33,7 +33,9 @@ final class AppController {
         authMode: cfg.auth,
         secretBroker: cfg.secretBroker,
         maxBatchBytes: cfg.maxBatchBytes,
-        maxBatchAgeDays: cfg.maxBatchAgeDays
+        maxBatchAgeDays: cfg.maxBatchAgeDays,
+        deviceId: cfg.deviceId,
+        encryptLocalBatches: cfg.encryptLocalBatches
       )
     } catch {
       Log.submit.fault(
@@ -44,7 +46,9 @@ final class AppController {
         localOnly: true,
         authMode: .none,
         maxBatchBytes: cfg.maxBatchBytes,
-        maxBatchAgeDays: cfg.maxBatchAgeDays
+        maxBatchAgeDays: cfg.maxBatchAgeDays,
+        deviceId: cfg.deviceId,
+        encryptLocalBatches: false
       )
     }
     self.submitter = submitter
@@ -277,8 +281,12 @@ final class AppController {
     flushTimer?.invalidate()
     let interval = max(1, config.batchIntervalSeconds)
     let pipeline = pipeline
+    let submitter = submitter
     flushTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
-      Task { await pipeline.flush() }
+      Task {
+        await pipeline.flush()
+        _ = await submitter.retryLocalBatches()
+      }
     }
   }
 

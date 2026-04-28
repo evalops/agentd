@@ -74,6 +74,7 @@ struct AgentConfig: Codable, Sendable {
   var idleThresholdSeconds: Double
   var idlePollSeconds: Double
   var localOnly: Bool
+  var encryptLocalBatches: Bool
   var auth: AuthMode
   var secretBroker: SecretBrokerConfig?
 
@@ -100,6 +101,7 @@ struct AgentConfig: Codable, Sendable {
     case idleThresholdSeconds
     case idlePollSeconds
     case localOnly
+    case encryptLocalBatches
     case auth
     case secretBroker
   }
@@ -126,6 +128,7 @@ struct AgentConfig: Codable, Sendable {
     idleThresholdSeconds: Double = 60,
     idlePollSeconds: Double = 5,
     localOnly: Bool,
+    encryptLocalBatches: Bool? = nil,
     auth: AuthMode = .none,
     secretBroker: SecretBrokerConfig? = nil
   ) {
@@ -150,6 +153,7 @@ struct AgentConfig: Codable, Sendable {
     self.idleThresholdSeconds = idleThresholdSeconds
     self.idlePollSeconds = idlePollSeconds
     self.localOnly = localOnly
+    self.encryptLocalBatches = encryptLocalBatches ?? (!localOnly || secretBroker != nil)
     self.auth = auth
     self.secretBroker = secretBroker
   }
@@ -241,6 +245,9 @@ struct AgentConfig: Codable, Sendable {
     localOnly = try container.decodeIfPresent(Bool.self, forKey: .localOnly) ?? true
     auth = try container.decodeIfPresent(AuthMode.self, forKey: .auth) ?? .none
     secretBroker = try container.decodeIfPresent(SecretBrokerConfig.self, forKey: .secretBroker)
+    encryptLocalBatches =
+      try container.decodeIfPresent(Bool.self, forKey: .encryptLocalBatches)
+      ?? (!localOnly || secretBroker != nil)
   }
 
   func encode(to encoder: Encoder) throws {
@@ -266,6 +273,7 @@ struct AgentConfig: Codable, Sendable {
     try container.encode(idleThresholdSeconds, forKey: .idleThresholdSeconds)
     try container.encode(idlePollSeconds, forKey: .idlePollSeconds)
     try container.encode(localOnly, forKey: .localOnly)
+    try container.encode(encryptLocalBatches, forKey: .encryptLocalBatches)
     try container.encode(auth, forKey: .auth)
     try container.encodeIfPresent(secretBroker, forKey: .secretBroker)
   }
@@ -325,6 +333,7 @@ struct AgentConfig: Codable, Sendable {
       idleThresholdSeconds: 60,
       idlePollSeconds: 5,
       localOnly: true,
+      encryptLocalBatches: false,
       auth: .none,
       secretBroker: nil
     )

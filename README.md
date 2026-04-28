@@ -28,11 +28,14 @@ This is the desktop component of the work tracked in
   (default 4096) with `ocrTextTruncated` set when the cap applies.
 - Batches every 30s or 24 frames, whichever first.
 - Local-only mode persists batches under `~/.evalops/agentd/batches/` as
-  `0o600` JSON and sweeps old or over-budget batches; HTTP mode `POST`s a
-  Connect/proto JSON `SubmitBatchRequest` to
+  `0o600` JSON by default and sweeps old or over-budget batches; HTTP mode
+  `POST`s a Connect/proto JSON `SubmitBatchRequest` to
   `chronicle.v1.ChronicleService.SubmitBatch` and falls back to local on
   failure. Remote HTTP is allowed only for loopback development; non-loopback
   remote endpoints must use HTTPS and configured client auth.
+- Remote and Secret Broker modes encrypt local fallback batches at rest by
+  default using a per-device Keychain-backed AES-GCM key. Local-only mode can
+  opt in with `encryptLocalBatches: true`.
 - Optional Secret Broker mode wraps the frame batch into a broker artifact
   (`chronicle_frame_batch_json`) first, then sends only the artifact/session
   reference to Chronicle so Platform can unwrap, meter, and revoke through ASB.
@@ -97,6 +100,8 @@ agentd reads and writes `~/.evalops/agentd/config.json`. Important defaults:
 - `maxOcrTextChars: 4096`
 - `maxBatchAgeDays: 7`
 - `maxBatchBytes: 536870912`
+- `encryptLocalBatches: false` in local-only mode, `true` in remote or Secret
+  Broker mode when omitted
 - `auth: { "mode": "none" }`
 
 Remote mode requires `localOnly: false`, an HTTPS or loopback endpoint, and an
@@ -165,6 +170,12 @@ batch interval, and max-frame settings at runtime. Server `PAUSED` capture mode
 stops capture until a later policy resumes it, while manual user pause still
 wins locally.
 
+Encrypted local batches use the `.agentdbatch` extension. The encryption key is
+created or loaded from Keychain service `dev.evalops.agentd.local-batch-key`,
+accounted by `deviceId`, and is never written to `config.json` or the batch
+directory. Retention sweeps apply to both plaintext `.json` batches and
+encrypted `.agentdbatch` batches.
+
 ## What's next
 
 - Consume generated `chronicle.v1` Swift types when the platform SDK publishes
@@ -172,7 +183,6 @@ wins locally.
   ([evalops/platform#1078](https://github.com/evalops/platform/issues/1078)).
 - Calendar / Zoom auto-pause via NATS subject
   `chronicle.policy.pause` (siphon-fed).
-- Encryption-at-rest option for local batches.
 - Hardware-backed permission-flow smoke test for Screen Recording and
   Accessibility prompts.
 
