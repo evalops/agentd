@@ -1,0 +1,11 @@
+{
+  "policy": {
+    "allowedBundleIds": [
+      "com.test.App"
+    ],
+    "captureMode": "CAPTURE_MODE_HYBRID",
+    "maxFramesPerBatch": 8,
+    "policyVersion": "policy_1",
+    "scheduledPauseWindows": []
+  }
+}

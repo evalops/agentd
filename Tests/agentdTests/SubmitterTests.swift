@@ -45,10 +45,12 @@ final class SubmitterTests: XCTestCase {
     XCTAssertEqual(encodedBatch["organizationId"] as? String, "org_1")
     XCTAssertEqual(encodedBatch["projectId"] as? String, "project_1")
     XCTAssertNil(encodedBatch["orgId"])
+    XCTAssertNotNil(encodedBatch["captureWindow"])
 
     let frames = try XCTUnwrap(encodedBatch["frames"] as? [[String: Any]])
     XCTAssertEqual(frames.first?["perceptualHash"] as? String, "42")
     XCTAssertEqual(frames.first?["bytesPng"] as? String, "120000")
+    XCTAssertEqual(frames.first?["displayId"] as? Int, 0)
     XCTAssertEqual(frames.first?["ocrTextTruncated"] as? Bool, false)
     XCTAssertEqual(frames.first?["bundleId"] as? String, "com.microsoft.VSCode")
     XCTAssertEqual(frames.first?["frameHash"] as? String, String(repeating: "a", count: 64))

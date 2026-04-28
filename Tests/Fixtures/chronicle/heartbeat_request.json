@@ -1,0 +1,8 @@
+{
+  "deviceId": "device_1",
+  "organizationId": "org_1",
+  "pauseReason": "scheduled:meeting",
+  "paused": true,
+  "pendingBytes": "4096",
+  "pendingFrameCount": 3
+}

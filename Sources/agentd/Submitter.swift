@@ -17,6 +17,7 @@ actor Submitter {
   private let localBatchCryptor: LocalBatchCryptor?
   private var isRetryingLocalBatches = false
   private var retryLocalBatchesNeedsRerun = false
+  private var lastResultDescription: String?
 
   init(
     endpoint: URL,
@@ -111,6 +112,7 @@ actor Submitter {
 
     if localOnly {
       await persistLocal(batch.batchId, data: fallbackData)
+      lastResultDescription = "persisted local batch \(batch.batchId)"
       return .persistedLocal
     }
 
@@ -122,6 +124,7 @@ actor Submitter {
         "remote submit prepare failed batch=\(batch.batchId, privacy: .public) error=\(error.localizedDescription, privacy: .public) — falling back to local"
       )
       await persistLocal(batch.batchId, data: fallbackData)
+      lastResultDescription = "persisted local fallback batch \(batch.batchId)"
       return .persistedLocal
     }
 
@@ -133,10 +136,12 @@ actor Submitter {
           "local batch replay submitted=\(replay.submitted, privacy: .public) failed=\(replay.failed, privacy: .public)"
         )
       }
+      lastResultDescription = "submitted batch \(batch.batchId)"
       return result
     }
 
     await persistLocal(batch.batchId, data: fallbackData)
+    lastResultDescription = "persisted local fallback batch \(batch.batchId)"
     return .persistedLocal
   }
 
@@ -387,6 +392,40 @@ actor Submitter {
     )
   }
 
+  func localBatchSummaries() async -> [LocalBatchSummary] {
+    localBatchFiles().sorted(by: { $0.modified > $1.modified }).map {
+      LocalBatchSummary(
+        batchId: $0.batchId,
+        fileName: $0.url.lastPathComponent,
+        modified: $0.modified,
+        bytes: $0.size,
+        encrypted: $0.encrypted
+      )
+    }
+  }
+
+  @discardableResult
+  func deleteLocalBatches(batchIds: Set<String>? = nil) async -> Int {
+    var removed = 0
+    for file in localBatchFiles() {
+      if let batchIds, !batchIds.contains(file.batchId) {
+        continue
+      }
+      if (try? FileManager.default.removeItem(at: file.url)) != nil {
+        removed += 1
+      }
+    }
+    return removed
+  }
+
+  func batchDirectoryURL() -> URL {
+    batchDirectory
+  }
+
+  func lastSubmitResult() -> String? {
+    lastResultDescription
+  }
+
   private func localBatchFiles() -> [LocalBatchFile] {
     guard
       let urls = try? FileManager.default.contentsOfDirectory(
@@ -449,6 +488,14 @@ struct LocalBatchReplayResult: Sendable, Equatable {
 struct LocalBatchStats: Sendable, Equatable {
   let fileCount: Int
   let bytes: Int64
+}
+
+struct LocalBatchSummary: Sendable, Codable, Equatable {
+  let batchId: String
+  let fileName: String
+  let modified: Date
+  let bytes: Int64
+  let encrypted: Bool
 }
 
 protocol HTTPClient: Sendable {

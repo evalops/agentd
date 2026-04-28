@@ -11,7 +11,8 @@ This is the desktop component of the work tracked in
 
 - Captures the active display via `ScreenCaptureKit` at an adaptive 0.2–1 fps;
   input idle time drops cadence to `idleFps` and activity restores
-  `captureFps`.
+  `captureFps`. Frames include display id, scale, and main-display metadata for
+  multi-display diagnostics.
 - Reads `(bundleId, windowTitle, documentPath)` per frame via the Accessibility
   API and `NSWorkspace`.
 - Runs Apple Vision OCR on-device.
@@ -22,6 +23,9 @@ This is the desktop component of the work tracked in
   Stripe markers — match → frame dropped, never partial-redacted.
 - Per-app allow/deny list and per-path deny list.
 - Window-title pause patterns (Zoom, FaceTime, 1Password…).
+- Scheduled pause windows from managed policy pause capture for meetings,
+  interviews, private/focus blocks, or Platform-driven policy windows; manual
+  pause always wins over automatic resume.
 - Secret scanning covers OCR text, window titles, and document paths before a
   frame is batched.
 - OCR text is scrubbed at full length, then capped to `maxOcrTextChars`
@@ -44,7 +48,7 @@ This is the desktop component of the work tracked in
   without requiring an app restart. Local hard-deny safety rails remain
   fail-closed even when a remote policy allows a bundle or path.
 - Menu-bar UI: pause/resume (`⌃⌥⌘P`), flush now (`⌃⌥⌘F`), reveal batches dir,
-  quit.
+  diagnostics report (`⌃⌥⌘D`), delete queued batches, launch-at-login, quit.
 
 ## Build
 
@@ -52,6 +56,7 @@ This is the desktop component of the work tracked in
 swift build
 swift run agentd       # foreground; menu-bar item appears
 swift test
+python3 scripts/mock_chronicle.py --self-test Tests/Fixtures/chronicle
 scripts/package_app.sh # release .app bundle with hardened runtime signing
 scripts/permission_smoke.sh --no-launch # generate permission-smoke evidence template
 ```
@@ -87,6 +92,9 @@ version/checksum/codesign evidence in `dist/permission-smoke-report.md`, and
 opens the app unless `--no-launch` is supplied. Use it for the hardware-backed
 Screen Recording and Accessibility permission smoke.
 
+Launch-at-login uses native `SMAppService.mainApp` from the menu bar; agentd
+does not install LaunchAgent plists.
+
 ## Configuration
 
 agentd reads and writes `~/.evalops/agentd/config.json`. Important defaults:
@@ -95,6 +103,9 @@ agentd reads and writes `~/.evalops/agentd/config.json`. Important defaults:
 - `captureFps: 1.0`
 - `idleFps: 0.2`
 - `idleThresholdSeconds: 60`
+- `adaptiveOcrMinChars: 1024`
+- `adaptiveOcrBackpressureThreshold: 8`
+- `adaptiveOcrBacklogBytes: 67108864`
 - `batchIntervalSeconds: 30`
 - `maxFramesPerBatch: 24`
 - `maxOcrTextChars: 4096`
@@ -166,9 +177,10 @@ Secret Broker mode, and local permission preflight metadata. Every 30 seconds it
 calls `Heartbeat` with pending in-memory frames plus local fallback batch count
 and bytes. `RegisterDevice` and `Heartbeat` responses may include a
 `CapturePolicy`; agentd applies allowlist, denylist, path-deny, pause-window,
-batch interval, and max-frame settings at runtime. Server `PAUSED` capture mode
-stops capture until a later policy resumes it, while manual user pause still
-wins locally.
+scheduled pause windows, batch interval, and max-frame settings at runtime.
+Server `PAUSED` capture mode stops capture until a later policy resumes it.
+Manual user pause wins over scheduled pause, and scheduled pause wins over
+server policy pause for visible menu/diagnostic state.
 
 Encrypted local batches use the `.agentdbatch` extension. The encryption key is
 created or loaded from Keychain service `dev.evalops.agentd.local-batch-key`,
@@ -176,13 +188,20 @@ accounted by `deviceId`, and is never written to `config.json` or the batch
 directory. Retention sweeps apply to both plaintext `.json` batches and
 encrypted `.agentdbatch` batches.
 
+Diagnostics reports are written under `~/.evalops/agentd/diagnostics/` with
+`0o600` permissions. They summarize permissions, policy, queue pressure, local
+batches, and last submit health without OCR text or raw payloads.
+
+`scripts/mock_chronicle.py` provides a strict local mock Chronicle and Secret
+Broker harness. CI validates the golden fixtures in `Tests/Fixtures/chronicle`
+so request-shape drift is explicit until generated `chronicle.v1` Swift types
+are available.
+
 ## What's next
 
 - Consume generated `chronicle.v1` Swift types when the platform SDK publishes
   them
   ([evalops/platform#1078](https://github.com/evalops/platform/issues/1078)).
-- Calendar / Zoom auto-pause via NATS subject
-  `chronicle.policy.pause` (siphon-fed).
 - Hardware-backed permission-flow smoke test for Screen Recording and
   Accessibility prompts.
 
@@ -192,6 +211,9 @@ encrypted `.agentdbatch` batches.
 Sources/agentd/
   main.swift              # NSApplication + AppController boot
   ChronicleControl.swift  # RegisterDevice/Heartbeat + policy response client
+  Diagnostics.swift       # Redacted local report generation
+  PauseState.swift        # Manual/scheduled/policy pause precedence
+  LaunchAtLoginController.swift # Native SMAppService login item toggle
   Config.swift            # ~/.evalops/agentd/config.json
   CaptureService.swift    # SCStream pipeline
   WindowContext.swift     # AX + NSWorkspace probe

@@ -98,7 +98,7 @@ jobs:
       - name: Record checksums
         run: |
           set -euo pipefail
-          shasum -a 256 "dist/EvalOps agentd.app/Contents/MacOS/agentd" "dist/agentd.zip" | tee dist/SHA256SUMS
+          shasum -a 256 "dist/EvalOps agentd.app/Contents/MacOS/agentd" "dist/agentd.zip" "dist/update-channel.json" | tee dist/SHA256SUMS
           codesign -dvvv --entitlements :- "dist/EvalOps agentd.app" > dist/codesign.txt 2>&1
           spctl -a -t exec -vv "dist/EvalOps agentd.app" > dist/spctl.txt 2>&1
 
@@ -110,6 +110,7 @@ jobs:
             dist/EvalOps agentd.app
             dist/agentd.zip
             dist/SHA256SUMS
+            dist/update-channel.json
             dist/codesign.txt
             dist/spctl.txt
           if-no-files-found: error

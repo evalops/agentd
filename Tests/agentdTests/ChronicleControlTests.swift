@@ -32,6 +32,7 @@ final class ChronicleControlTests: XCTestCase {
     XCTAssertEqual(root["organizationId"] as? String, "org_1")
     XCTAssertEqual(root["pendingFrameCount"] as? Int, 2)
     XCTAssertEqual(root["pendingBytes"] as? String, "123456")
+    XCTAssertEqual(root["paused"] as? Bool, false)
   }
 
   func testControlClientRegistersAndHeartbeatsWithBearerAuth() async throws {
@@ -61,9 +62,11 @@ final class ChronicleControlTests: XCTestCase {
       XCTAssertTrue(url.path.hasSuffix("/Heartbeat"))
       XCTAssertEqual(root["pendingFrameCount"] as? Int, 3)
       XCTAssertEqual(root["pendingBytes"] as? String, "4096")
+      XCTAssertEqual(root["paused"] as? Bool, true)
+      XCTAssertEqual(root["pauseReason"] as? String, "scheduled:meeting")
       return (
         Data(
-          #"{"device":{"deviceId":"device_1","organizationId":"org_1","paused":true,"pauseReason":"policy"},"policy":{"policyVersion":"p2","captureMode":"CAPTURE_MODE_PAUSED"}}"#
+          #"{"device":{"deviceId":"device_1","organizationId":"org_1","paused":true,"pauseReason":"policy"},"policy":{"policyVersion":"p2","captureMode":"CAPTURE_MODE_PAUSED","scheduledPauseWindows":[{"id":"meeting_1","reason":"meeting","startsAt":"2026-04-28T16:00:00Z","endsAt":"2026-04-28T17:00:00Z"}]}}"#
             .utf8),
         Self.response(for: url, statusCode: 200)
       )
@@ -92,13 +95,16 @@ final class ChronicleControlTests: XCTestCase {
         deviceId: "device_1",
         organizationId: "org_1",
         pendingFrameCount: 3,
-        pendingBytes: 4096
+        pendingBytes: 4096,
+        paused: true,
+        pauseReason: "scheduled:meeting"
       ))
 
     XCTAssertEqual(register.policy?.policyVersion, "p1")
     XCTAssertEqual(register.policy?.maxFramesPerBatch, 4)
     XCTAssertEqual(heartbeat.device?.paused, true)
     XCTAssertEqual(heartbeat.policy?.captureMode, .paused)
+    XCTAssertEqual(heartbeat.policy?.scheduledPauseWindows.first?.id, "meeting_1")
     let requestCount = await recorder.count()
     XCTAssertEqual(requestCount, 2)
   }

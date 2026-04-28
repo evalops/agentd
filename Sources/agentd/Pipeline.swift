@@ -22,6 +22,9 @@ struct ProcessedFrame: Sendable, Codable {
   let widthPx: Int
   let heightPx: Int
   let bytesPng: Int
+  let displayId: UInt32
+  let displayScale: Double?
+  let mainDisplay: Bool
 
   enum CodingKeys: String, CodingKey {
     case frameHash
@@ -37,6 +40,9 @@ struct ProcessedFrame: Sendable, Codable {
     case widthPx
     case heightPx
     case bytesPng
+    case displayId
+    case displayScale
+    case mainDisplay
   }
 
   init(
@@ -52,7 +58,10 @@ struct ProcessedFrame: Sendable, Codable {
     ocrConfidence: Float,
     widthPx: Int,
     heightPx: Int,
-    bytesPng: Int
+    bytesPng: Int,
+    displayId: UInt32 = 0,
+    displayScale: Double? = nil,
+    mainDisplay: Bool = false
   ) {
     self.frameHash = frameHash
     self.perceptualHash = perceptualHash
@@ -67,6 +76,9 @@ struct ProcessedFrame: Sendable, Codable {
     self.widthPx = widthPx
     self.heightPx = heightPx
     self.bytesPng = bytesPng
+    self.displayId = displayId
+    self.displayScale = displayScale
+    self.mainDisplay = mainDisplay
   }
 
   init(from decoder: Decoder) throws {
@@ -94,6 +106,15 @@ struct ProcessedFrame: Sendable, Codable {
       let raw = try container.decode(String.self, forKey: .bytesPng)
       bytesPng = Int(raw) ?? 0
     }
+    if let value = try? container.decode(UInt32.self, forKey: .displayId) {
+      displayId = value
+    } else if let raw = try? container.decode(String.self, forKey: .displayId) {
+      displayId = UInt32(raw) ?? 0
+    } else {
+      displayId = 0
+    }
+    displayScale = try container.decodeIfPresent(Double.self, forKey: .displayScale)
+    mainDisplay = try container.decodeIfPresent(Bool.self, forKey: .mainDisplay) ?? false
   }
 
   func encode(to encoder: Encoder) throws {
@@ -113,6 +134,9 @@ struct ProcessedFrame: Sendable, Codable {
     try container.encode(heightPx, forKey: .heightPx)
     // Connect-protocol JSON serializes int64/uint64 as strings; keep this wire contract aligned with cmd/chronicle.
     try container.encode(String(bytesPng), forKey: .bytesPng)
+    try container.encode(displayId, forKey: .displayId)
+    try container.encodeIfPresent(displayScale, forKey: .displayScale)
+    try container.encode(mainDisplay, forKey: .mainDisplay)
   }
 }
 
@@ -126,8 +150,77 @@ struct Batch: Sendable, Codable {
   let repository: String?
   let startedAt: Date
   let endedAt: Date
+  let captureWindow: CaptureWindow
   let frames: [ProcessedFrame]
   let droppedCounts: DropCounts
+
+  init(
+    batchId: String,
+    deviceId: String,
+    organizationId: String,
+    workspaceId: String?,
+    userId: String?,
+    projectId: String?,
+    repository: String?,
+    startedAt: Date,
+    endedAt: Date,
+    captureWindow: CaptureWindow? = nil,
+    frames: [ProcessedFrame],
+    droppedCounts: DropCounts
+  ) {
+    self.batchId = batchId
+    self.deviceId = deviceId
+    self.organizationId = organizationId
+    self.workspaceId = workspaceId
+    self.userId = userId
+    self.projectId = projectId
+    self.repository = repository
+    self.startedAt = startedAt
+    self.endedAt = endedAt
+    self.captureWindow = captureWindow ?? CaptureWindow(startedAt: startedAt, endedAt: endedAt)
+    self.frames = frames
+    self.droppedCounts = droppedCounts
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case batchId
+    case deviceId
+    case organizationId
+    case workspaceId
+    case userId
+    case projectId
+    case repository
+    case startedAt
+    case endedAt
+    case captureWindow
+    case frames
+    case droppedCounts
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let startedAt = try container.decode(Date.self, forKey: .startedAt)
+    let endedAt = try container.decode(Date.self, forKey: .endedAt)
+    self.init(
+      batchId: try container.decode(String.self, forKey: .batchId),
+      deviceId: try container.decode(String.self, forKey: .deviceId),
+      organizationId: try container.decode(String.self, forKey: .organizationId),
+      workspaceId: try container.decodeIfPresent(String.self, forKey: .workspaceId),
+      userId: try container.decodeIfPresent(String.self, forKey: .userId),
+      projectId: try container.decodeIfPresent(String.self, forKey: .projectId),
+      repository: try container.decodeIfPresent(String.self, forKey: .repository),
+      startedAt: startedAt,
+      endedAt: endedAt,
+      captureWindow: try container.decodeIfPresent(CaptureWindow.self, forKey: .captureWindow),
+      frames: try container.decode([ProcessedFrame].self, forKey: .frames),
+      droppedCounts: try container.decode(DropCounts.self, forKey: .droppedCounts)
+    )
+  }
+}
+
+struct CaptureWindow: Sendable, Codable, Equatable {
+  let startedAt: Date
+  let endedAt: Date
 }
 
 struct DropCounts: Sendable, Codable {
@@ -160,6 +253,26 @@ struct DropCounts: Sendable, Codable {
     deniedApp = try container.decode(Int.self, forKey: .deniedApp)
     deniedPath = try container.decode(Int.self, forKey: .deniedPath)
     droppedBackpressure = try container.decodeIfPresent(Int.self, forKey: .droppedBackpressure) ?? 0
+  }
+}
+
+struct OcrBudgetController: Sendable, Equatable {
+  static func maxPersistedCharacters(
+    config: AgentConfig,
+    pendingBytes: Int64,
+    droppedBackpressure: Int
+  ) -> Int {
+    guard config.maxOcrTextChars > 0 else { return 0 }
+    let minChars = max(0, min(config.adaptiveOcrMinChars, config.maxOcrTextChars))
+    let underBackpressure =
+      config.adaptiveOcrBackpressureThreshold > 0
+      && droppedBackpressure >= config.adaptiveOcrBackpressureThreshold
+    let overBacklog =
+      config.adaptiveOcrBacklogBytes > 0 && pendingBytes >= config.adaptiveOcrBacklogBytes
+    guard underBackpressure || overBacklog else {
+      return config.maxOcrTextChars
+    }
+    return minChars
   }
 }
 
@@ -272,7 +385,13 @@ actor FramePipeline {
       break
     }
 
-    let ocrText = truncated(ocrResult.text, maxChars: config.maxOcrTextChars)
+    let pendingBytes = pending.reduce(Int64(0)) { $0 + Int64($1.bytesPng) }
+    let maxOcrChars = OcrBudgetController.maxPersistedCharacters(
+      config: config,
+      pendingBytes: pendingBytes,
+      droppedBackpressure: droppedBackpressure
+    )
+    let ocrText = truncated(ocrResult.text, maxChars: maxOcrChars)
     // `bytesPng` is a cheap raw-BGRA size estimate; raw pixels stay on device and are not PNG-encoded.
     let estimatedBytes = frame.cgImage.width * frame.cgImage.height * 4
     let frameHash = sha256Hex(
@@ -292,7 +411,10 @@ actor FramePipeline {
       ocrConfidence: ocrResult.confidence,
       widthPx: frame.cgImage.width,
       heightPx: frame.cgImage.height,
-      bytesPng: estimatedBytes
+      bytesPng: estimatedBytes,
+      displayId: frame.displayId,
+      displayScale: frame.displayScale,
+      mainDisplay: frame.mainDisplay
     )
 
     pending.append(processed)

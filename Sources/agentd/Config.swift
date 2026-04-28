@@ -73,6 +73,9 @@ struct AgentConfig: Codable, Sendable {
   var maxBatchAgeDays: Double
   var idleThresholdSeconds: Double
   var idlePollSeconds: Double
+  var adaptiveOcrMinChars: Int
+  var adaptiveOcrBackpressureThreshold: Int
+  var adaptiveOcrBacklogBytes: Int64
   var localOnly: Bool
   var encryptLocalBatches: Bool
   var auth: AuthMode
@@ -100,6 +103,9 @@ struct AgentConfig: Codable, Sendable {
     case maxBatchAgeDays
     case idleThresholdSeconds
     case idlePollSeconds
+    case adaptiveOcrMinChars
+    case adaptiveOcrBackpressureThreshold
+    case adaptiveOcrBacklogBytes
     case localOnly
     case encryptLocalBatches
     case auth
@@ -127,6 +133,9 @@ struct AgentConfig: Codable, Sendable {
     maxBatchAgeDays: Double = 7,
     idleThresholdSeconds: Double = 60,
     idlePollSeconds: Double = 5,
+    adaptiveOcrMinChars: Int = 1024,
+    adaptiveOcrBackpressureThreshold: Int = 8,
+    adaptiveOcrBacklogBytes: Int64 = 64 * 1024 * 1024,
     localOnly: Bool,
     encryptLocalBatches: Bool? = nil,
     auth: AuthMode = .none,
@@ -152,6 +161,9 @@ struct AgentConfig: Codable, Sendable {
     self.maxBatchAgeDays = maxBatchAgeDays
     self.idleThresholdSeconds = idleThresholdSeconds
     self.idlePollSeconds = idlePollSeconds
+    self.adaptiveOcrMinChars = adaptiveOcrMinChars
+    self.adaptiveOcrBackpressureThreshold = adaptiveOcrBackpressureThreshold
+    self.adaptiveOcrBacklogBytes = adaptiveOcrBacklogBytes
     self.localOnly = localOnly
     self.encryptLocalBatches = encryptLocalBatches ?? (!localOnly || secretBroker != nil)
     self.auth = auth
@@ -242,6 +254,13 @@ struct AgentConfig: Codable, Sendable {
     idleThresholdSeconds =
       try container.decodeIfPresent(Double.self, forKey: .idleThresholdSeconds) ?? 60
     idlePollSeconds = try container.decodeIfPresent(Double.self, forKey: .idlePollSeconds) ?? 5
+    adaptiveOcrMinChars =
+      try container.decodeIfPresent(Int.self, forKey: .adaptiveOcrMinChars) ?? 1024
+    adaptiveOcrBackpressureThreshold =
+      try container.decodeIfPresent(Int.self, forKey: .adaptiveOcrBackpressureThreshold) ?? 8
+    adaptiveOcrBacklogBytes =
+      try container.decodeIfPresent(Int64.self, forKey: .adaptiveOcrBacklogBytes)
+      ?? 64 * 1024 * 1024
     localOnly = try container.decodeIfPresent(Bool.self, forKey: .localOnly) ?? true
     auth = try container.decodeIfPresent(AuthMode.self, forKey: .auth) ?? .none
     secretBroker = try container.decodeIfPresent(SecretBrokerConfig.self, forKey: .secretBroker)
@@ -272,6 +291,10 @@ struct AgentConfig: Codable, Sendable {
     try container.encode(maxBatchAgeDays, forKey: .maxBatchAgeDays)
     try container.encode(idleThresholdSeconds, forKey: .idleThresholdSeconds)
     try container.encode(idlePollSeconds, forKey: .idlePollSeconds)
+    try container.encode(adaptiveOcrMinChars, forKey: .adaptiveOcrMinChars)
+    try container.encode(
+      adaptiveOcrBackpressureThreshold, forKey: .adaptiveOcrBackpressureThreshold)
+    try container.encode(adaptiveOcrBacklogBytes, forKey: .adaptiveOcrBacklogBytes)
     try container.encode(localOnly, forKey: .localOnly)
     try container.encode(encryptLocalBatches, forKey: .encryptLocalBatches)
     try container.encode(auth, forKey: .auth)
@@ -309,9 +332,9 @@ struct AgentConfig: Codable, Sendable {
   ]
 
   static let defaultPauseWindowPatterns: [String] = [
-    "Zoom Meeting", "FaceTime", "Google Meet",
+    "Zoom Meeting", "Meet - ", "meet.google.com", "FaceTime", "Google Meet",
     "1Password", "Bitwarden", "Keychain Access",
-    "Private", "Incognito",
+    "Private Browsing", "Private", "Incognito",
   ]
 
   static func fallback() -> AgentConfig {
@@ -332,6 +355,9 @@ struct AgentConfig: Codable, Sendable {
       maxBatchAgeDays: 7,
       idleThresholdSeconds: 60,
       idlePollSeconds: 5,
+      adaptiveOcrMinChars: 1024,
+      adaptiveOcrBackpressureThreshold: 8,
+      adaptiveOcrBacklogBytes: 64 * 1024 * 1024,
       localOnly: true,
       encryptLocalBatches: false,
       auth: .none,

@@ -1,0 +1,45 @@
+{
+  "batch": {
+    "batchId": "batch_fixture",
+    "captureWindow": {
+      "endedAt": "2026-04-28T16:01:00Z",
+      "startedAt": "2026-04-28T16:00:00Z"
+    },
+    "deviceId": "device_1",
+    "droppedCounts": {
+      "deniedApp": 0,
+      "deniedPath": 0,
+      "droppedBackpressure": 0,
+      "duplicate": 0,
+      "secret": 0
+    },
+    "endedAt": "2026-04-28T16:01:00Z",
+    "frames": [
+      {
+        "appName": "Code",
+        "bundleId": "com.microsoft.VSCode",
+        "bytesPng": "400",
+        "capturedAt": "2026-04-28T16:00:30Z",
+        "displayId": 1,
+        "displayScale": 2,
+        "documentPath": "/Users/alice/src/platform/proto/chronicle/v1/chronicle.proto",
+        "frameHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "heightPx": 10,
+        "mainDisplay": true,
+        "ocrConfidence": 0.93,
+        "ocrText": "ChronicleService SubmitBatch",
+        "ocrTextTruncated": false,
+        "perceptualHash": "42",
+        "widthPx": 10,
+        "windowTitle": "chronicle.proto"
+      }
+    ],
+    "organizationId": "org_1",
+    "projectId": "project_1",
+    "repository": "evalops/platform",
+    "startedAt": "2026-04-28T16:00:00Z",
+    "userId": "user_1",
+    "workspaceId": "workspace_1"
+  },
+  "localOnly": true
+}

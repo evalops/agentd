@@ -32,6 +32,7 @@ struct CapturePolicy: Sendable, Codable, Equatable {
   var cloudConsolidationTier: String
   var minBatchIntervalSeconds: Int
   var maxFramesPerBatch: Int
+  var scheduledPauseWindows: [ScheduledPauseWindow]
   var sourcePolicyRef: String
 
   init(
@@ -45,6 +46,7 @@ struct CapturePolicy: Sendable, Codable, Equatable {
     cloudConsolidationTier: String = "",
     minBatchIntervalSeconds: Int = 0,
     maxFramesPerBatch: Int = 0,
+    scheduledPauseWindows: [ScheduledPauseWindow] = [],
     sourcePolicyRef: String = ""
   ) {
     self.policyVersion = policyVersion
@@ -57,6 +59,7 @@ struct CapturePolicy: Sendable, Codable, Equatable {
     self.cloudConsolidationTier = cloudConsolidationTier
     self.minBatchIntervalSeconds = minBatchIntervalSeconds
     self.maxFramesPerBatch = maxFramesPerBatch
+    self.scheduledPauseWindows = scheduledPauseWindows
     self.sourcePolicyRef = sourcePolicyRef
   }
 
@@ -71,6 +74,7 @@ struct CapturePolicy: Sendable, Codable, Equatable {
     case cloudConsolidationTier
     case minBatchIntervalSeconds
     case maxFramesPerBatch
+    case scheduledPauseWindows
     case sourcePolicyRef
   }
 
@@ -100,9 +104,20 @@ struct CapturePolicy: Sendable, Codable, Equatable {
         forKey: .minBatchIntervalSeconds
       ) ?? 0,
       maxFramesPerBatch: try container.decodeIfPresent(Int.self, forKey: .maxFramesPerBatch) ?? 0,
+      scheduledPauseWindows: try container.decodeIfPresent(
+        [ScheduledPauseWindow].self,
+        forKey: .scheduledPauseWindows
+      ) ?? [],
       sourcePolicyRef: try container.decodeIfPresent(String.self, forKey: .sourcePolicyRef) ?? ""
     )
   }
+}
+
+struct ScheduledPauseWindow: Sendable, Codable, Equatable {
+  var id: String
+  var reason: String
+  var startsAt: Date
+  var endsAt: Date
 }
 
 struct ChronicleDevice: Sendable, Codable, Equatable {
@@ -162,12 +177,32 @@ struct HeartbeatRequest: Sendable, Codable, Equatable {
   var organizationId: String
   var pendingFrameCount: Int
   var pendingBytes: Int64
+  var paused: Bool
+  var pauseReason: String?
 
   enum CodingKeys: String, CodingKey {
     case deviceId
     case organizationId
     case pendingFrameCount
     case pendingBytes
+    case paused
+    case pauseReason
+  }
+
+  init(
+    deviceId: String,
+    organizationId: String,
+    pendingFrameCount: Int,
+    pendingBytes: Int64,
+    paused: Bool = false,
+    pauseReason: String? = nil
+  ) {
+    self.deviceId = deviceId
+    self.organizationId = organizationId
+    self.pendingFrameCount = pendingFrameCount
+    self.pendingBytes = pendingBytes
+    self.paused = paused
+    self.pauseReason = pauseReason
   }
 
   func encode(to encoder: Encoder) throws {
@@ -176,6 +211,8 @@ struct HeartbeatRequest: Sendable, Codable, Equatable {
     try container.encode(organizationId, forKey: .organizationId)
     try container.encode(pendingFrameCount, forKey: .pendingFrameCount)
     try container.encode(String(pendingBytes), forKey: .pendingBytes)
+    try container.encode(paused, forKey: .paused)
+    try container.encodeIfPresent(pauseReason, forKey: .pauseReason)
   }
 }
 
@@ -283,7 +320,9 @@ actor ChronicleControlClient {
     if responseBody.isEmpty {
       return try JSONDecoder().decode(responseType, from: Data("{}".utf8))
     }
-    return try JSONDecoder().decode(responseType, from: responseBody)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return try decoder.decode(responseType, from: responseBody)
   }
 }
 
@@ -313,6 +352,7 @@ enum ChronicleControlError: Error, LocalizedError, Equatable {
 
 func encodeChronicleControlRequest<T: Encodable>(_ request: T) throws -> Data {
   let enc = JSONEncoder()
+  enc.dateEncodingStrategy = .iso8601
   enc.outputFormatting = [.sortedKeys]
   return try enc.encode(request)
 }

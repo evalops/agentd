@@ -114,6 +114,32 @@ final class PipelineTests: XCTestCase {
     let batch = try XCTUnwrap(batches.first)
     XCTAssertEqual(batch.frames.count, 2)
     XCTAssertEqual(batch.frames.first?.bytesPng, 8 * 8 * 4)
+    XCTAssertEqual(batch.frames.first?.displayId, 1)
+    XCTAssertEqual(batch.frames.first?.displayScale, 2.0)
+    XCTAssertTrue(batch.frames.first?.mainDisplay == true)
+  }
+
+  func testAdaptiveOcrBudgetCapsPersistedTextWhenBackpressureIsHigh() async throws {
+    let recorder = BatchRecorder()
+    var cfg = Self.config(maxOcrTextChars: 128)
+    cfg.adaptiveOcrMinChars = 16
+    cfg.adaptiveOcrBackpressureThreshold = 1
+    let pipeline = FramePipeline(
+      config: cfg,
+      ocr: StubOCR(text: String(repeating: "a", count: 128))
+    ) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.recordBackpressureDrop()
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.flush()
+
+    let batches = await recorder.snapshot()
+    let frame = try XCTUnwrap(batches.first?.frames.first)
+    XCTAssertEqual(frame.ocrText.count, 16)
+    XCTAssertTrue(frame.ocrTextTruncated)
+    XCTAssertEqual(batches.first?.droppedCounts.droppedBackpressure, 1)
   }
 
   func testManualFlushEmitsPendingFrame() async throws {
@@ -270,7 +296,13 @@ final class PipelineTests: XCTestCase {
   }
 
   static func frame(bits: UInt64) -> CapturedFrame {
-    CapturedFrame(timestamp: Date(), cgImage: image(bits: bits), displayId: 1)
+    CapturedFrame(
+      timestamp: Date(),
+      cgImage: image(bits: bits),
+      displayId: 1,
+      displayScale: 2.0,
+      mainDisplay: true
+    )
   }
 
   static func image(bits: UInt64) -> CGImage {

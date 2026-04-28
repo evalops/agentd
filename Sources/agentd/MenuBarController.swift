@@ -8,21 +8,31 @@ final class MenuBarController: NSObject {
   private let statusItem: NSStatusItem
   private let menu = NSMenu()
   private var aboutItem: NSMenuItem?
+  private var launchAtLoginItem: NSMenuItem?
   private var paused: Bool = false
   private let onPauseToggle: @Sendable (Bool) -> Void
   private let onFlushNow: @Sendable () -> Void
   private let onOpenBatchesDir: @Sendable () -> Void
+  private let onOpenDiagnostics: @Sendable () -> Void
+  private let onDeleteQueuedBatches: @Sendable () -> Void
+  private let onLaunchAtLoginToggle: @Sendable (Bool) -> Void
   private let onQuit: @Sendable () -> Void
 
   init(
     onPauseToggle: @escaping @Sendable (Bool) -> Void,
     onFlushNow: @escaping @Sendable () -> Void,
     onOpenBatchesDir: @escaping @Sendable () -> Void,
+    onOpenDiagnostics: @escaping @Sendable () -> Void,
+    onDeleteQueuedBatches: @escaping @Sendable () -> Void,
+    onLaunchAtLoginToggle: @escaping @Sendable (Bool) -> Void,
     onQuit: @escaping @Sendable () -> Void
   ) {
     self.onPauseToggle = onPauseToggle
     self.onFlushNow = onFlushNow
     self.onOpenBatchesDir = onOpenBatchesDir
+    self.onOpenDiagnostics = onOpenDiagnostics
+    self.onDeleteQueuedBatches = onDeleteQueuedBatches
+    self.onLaunchAtLoginToggle = onLaunchAtLoginToggle
     self.onQuit = onQuit
     self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     super.init()
@@ -55,6 +65,25 @@ final class MenuBarController: NSObject {
       title: "Reveal Batches in Finder", action: #selector(reveal), keyEquivalent: "")
     revealItem.target = self
     menu.addItem(revealItem)
+
+    let diagnosticsItem = NSMenuItem(
+      title: "Open Diagnostics Report", action: #selector(openDiagnostics), keyEquivalent: "d")
+    diagnosticsItem.keyEquivalentModifierMask = [.command, .option, .control]
+    diagnosticsItem.target = self
+    menu.addItem(diagnosticsItem)
+
+    let deleteItem = NSMenuItem(
+      title: "Delete Queued Batches", action: #selector(deleteQueuedBatches), keyEquivalent: "")
+    deleteItem.target = self
+    menu.addItem(deleteItem)
+
+    menu.addItem(.separator())
+
+    let launchItem = NSMenuItem(
+      title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+    launchItem.target = self
+    launchAtLoginItem = launchItem
+    menu.addItem(launchItem)
 
     menu.addItem(.separator())
 
@@ -91,6 +120,13 @@ final class MenuBarController: NSObject {
 
   @objc private func flush() { onFlushNow() }
   @objc private func reveal() { onOpenBatchesDir() }
+  @objc private func openDiagnostics() { onOpenDiagnostics() }
+  @objc private func deleteQueuedBatches() { onDeleteQueuedBatches() }
+  @objc private func toggleLaunchAtLogin() {
+    let next = !(launchAtLoginItem?.state == .on)
+    launchAtLoginItem?.state = next ? .on : .off
+    onLaunchAtLoginToggle(next)
+  }
   @objc private func quit() { onQuit() }
 
   func setStatus(paused: Bool, detail: String, localOnly: Bool, policyVersion: String?) {
@@ -109,6 +145,7 @@ final class MenuBarController: NSObject {
     let mode = localOnly ? "local-only" : "managed"
     let policy = policyVersion.map { " policy \($0)" } ?? ""
     aboutItem?.title = "agentd \(Bundle.main.appVersion) — \(mode)\(policy)"
+    launchAtLoginItem?.state = LaunchAtLoginController.isEnabled ? .on : .off
   }
 }
 
