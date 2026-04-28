@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "AGENTS.md"
+      - "**/AGENTS.md"
       - ".agents/skills/**"
       - ".github/ISSUE_TEMPLATE/**"
       - ".github/pull_request_template.md"
