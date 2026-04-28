@@ -136,6 +136,41 @@ final class ChronicleControlTests: XCTestCase {
     XCTAssertEqual(next.maxFramesPerBatch, 8)
   }
 
+  func testControlStateReportsDevicePauseChangesWithoutPolicy() {
+    var state = ChronicleControlState()
+
+    XCTAssertTrue(
+      state.apply(
+        device: ChronicleDevice(
+          deviceId: "device_1",
+          organizationId: "org_1",
+          paused: true,
+          pauseReason: "policy"
+        )))
+    XCTAssertEqual(state.serverPaused, true)
+    XCTAssertEqual(state.serverPauseReason, "policy")
+
+    XCTAssertFalse(
+      state.apply(
+        device: ChronicleDevice(
+          deviceId: "device_1",
+          organizationId: "org_1",
+          paused: true,
+          pauseReason: "policy"
+        )))
+
+    XCTAssertTrue(
+      state.apply(
+        device: ChronicleDevice(
+          deviceId: "device_1",
+          organizationId: "org_1",
+          paused: false,
+          pauseReason: nil
+        )))
+    XCTAssertEqual(state.serverPaused, false)
+    XCTAssertNil(state.serverPauseReason)
+  }
+
   fileprivate static func response(for url: URL, statusCode: Int) -> HTTPURLResponse {
     HTTPURLResponse(
       url: url,

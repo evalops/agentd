@@ -174,12 +174,13 @@ final class AppController {
       let response = try await controlClient.heartbeat(await makeHeartbeatRequest())
       controlState.registered = true
       controlState.lastError = nil
+      var devicePauseChanged = false
       if let device = response.device {
-        apply(device: device)
+        devicePauseChanged = apply(device: device)
       }
       if let policy = response.policy {
         await apply(policy: policy)
-      } else {
+      } else if devicePauseChanged {
         await reconcileCaptureState()
       }
     } catch {
@@ -218,9 +219,9 @@ final class AppController {
     )
   }
 
-  private func apply(device: ChronicleDevice) {
-    controlState.serverPaused = device.paused ?? false
-    controlState.serverPauseReason = device.pauseReason
+  @discardableResult
+  private func apply(device: ChronicleDevice) -> Bool {
+    controlState.apply(device: device)
   }
 
   private func apply(policy: CapturePolicy) async {

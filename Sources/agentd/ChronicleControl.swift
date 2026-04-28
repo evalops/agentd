@@ -116,6 +116,30 @@ struct ChronicleDevice: Sendable, Codable, Equatable {
   var paused: Bool?
   var pauseReason: String?
   var metadata: [String: String]?
+
+  init(
+    deviceId: String,
+    organizationId: String,
+    workspaceId: String? = nil,
+    userId: String? = nil,
+    hostname: String? = nil,
+    appVersion: String? = nil,
+    captureMode: CaptureMode? = nil,
+    paused: Bool? = nil,
+    pauseReason: String? = nil,
+    metadata: [String: String]? = nil
+  ) {
+    self.deviceId = deviceId
+    self.organizationId = organizationId
+    self.workspaceId = workspaceId
+    self.userId = userId
+    self.hostname = hostname
+    self.appVersion = appVersion
+    self.captureMode = captureMode
+    self.paused = paused
+    self.pauseReason = pauseReason
+    self.metadata = metadata
+  }
 }
 
 struct RegisterDeviceRequest: Sendable, Codable, Equatable {
@@ -166,6 +190,14 @@ struct ChronicleControlState: Sendable, Equatable {
   var serverPaused: Bool = false
   var serverPauseReason: String?
   var lastError: String?
+
+  mutating func apply(device: ChronicleDevice) -> Bool {
+    let previousPaused = serverPaused
+    let previousReason = serverPauseReason
+    serverPaused = device.paused ?? false
+    serverPauseReason = device.pauseReason
+    return previousPaused != serverPaused || previousReason != serverPauseReason
+  }
 }
 
 actor ChronicleControlClient {
