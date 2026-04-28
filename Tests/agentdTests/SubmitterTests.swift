@@ -516,7 +516,8 @@ final class SubmitterTests: XCTestCase {
     XCTAssertEqual(secondResult, LocalBatchReplayResult(submitted: 0, failed: 0))
     XCTAssertEqual(results.reduce(0) { $0 + $1.submitted }, 1)
     XCTAssertEqual(results.reduce(0) { $0 + $1.failed }, 0)
-    XCTAssertEqual(await recorder.values(), ["queued_batch"])
+    let recordedBatchIds = await recorder.values()
+    XCTAssertEqual(recordedBatchIds, ["queued_batch"])
     let remaining = try FileManager.default.contentsOfDirectory(
       at: dir,
       includingPropertiesForKeys: nil
