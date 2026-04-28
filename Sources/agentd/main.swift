@@ -33,7 +33,9 @@ final class AppController {
         authMode: cfg.auth,
         secretBroker: cfg.secretBroker,
         maxBatchBytes: cfg.maxBatchBytes,
-        maxBatchAgeDays: cfg.maxBatchAgeDays
+        maxBatchAgeDays: cfg.maxBatchAgeDays,
+        deviceId: cfg.deviceId,
+        encryptLocalBatches: cfg.encryptLocalBatches
       )
     } catch {
       Log.submit.fault(
@@ -44,7 +46,9 @@ final class AppController {
         localOnly: true,
         authMode: .none,
         maxBatchBytes: cfg.maxBatchBytes,
-        maxBatchAgeDays: cfg.maxBatchAgeDays
+        maxBatchAgeDays: cfg.maxBatchAgeDays,
+        deviceId: cfg.deviceId,
+        encryptLocalBatches: false
       )
     }
     self.submitter = submitter

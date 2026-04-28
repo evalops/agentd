@@ -14,6 +14,7 @@ actor Submitter {
   private let batchDirectory: URL
   private let maxBatchBytes: Int64
   private let maxBatchAgeDays: Double
+  private let localBatchCryptor: LocalBatchCryptor?
 
   init(
     endpoint: URL,
@@ -25,7 +26,10 @@ actor Submitter {
     client: (any HTTPClient)? = nil,
     batchDirectory: URL? = nil,
     maxBatchBytes: Int64 = 512 * 1024 * 1024,
-    maxBatchAgeDays: Double = 7
+    maxBatchAgeDays: Double = 7,
+    deviceId: String = "default",
+    encryptLocalBatches: Bool = false,
+    localBatchKeyProvider: any LocalBatchKeyProviding = KeychainLocalBatchKeyProvider()
   ) throws {
     guard EndpointPolicy.isAllowed(endpoint: endpoint, localOnly: localOnly) else {
       throw SubmitterInitError.insecureRemoteEndpoint(endpoint.absoluteString)
@@ -56,6 +60,13 @@ actor Submitter {
       .appendingPathComponent(".evalops/agentd/batches")
     self.maxBatchBytes = maxBatchBytes
     self.maxBatchAgeDays = maxBatchAgeDays
+    if encryptLocalBatches {
+      self.localBatchCryptor = try LocalBatchCryptor(
+        key: localBatchKeyProvider.localBatchKey(deviceId: deviceId)
+      )
+    } else {
+      self.localBatchCryptor = nil
+    }
 
     if let client {
       self.client = client
@@ -219,54 +230,92 @@ actor Submitter {
 
   private func persistLocal(_ id: String, data: Data) async {
     try? FileManager.default.createDirectory(at: batchDirectory, withIntermediateDirectories: true)
-    let url = batchDirectory.appendingPathComponent("\(id).json")
-    try? data.write(to: url, options: .atomic)
+    let url: URL
+    let dataToWrite: Data
+    if let localBatchCryptor {
+      do {
+        dataToWrite = try localBatchCryptor.encrypt(data)
+        url = batchDirectory.appendingPathComponent(
+          "\(id).\(LocalBatchCryptor.encryptedExtension)"
+        )
+      } catch {
+        Log.submit.error(
+          "local batch encrypt failed id=\(id, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+        )
+        return
+      }
+    } else {
+      dataToWrite = data
+      url = batchDirectory.appendingPathComponent("\(id).json")
+    }
+    try? dataToWrite.write(to: url, options: .atomic)
     try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     Log.submit.info("local persist \(url.path, privacy: .public)")
     await sweepLocalBatches()
   }
 
-  func sweepLocalBatches() async {
-    let fm = FileManager.default
-    guard
-      let urls = try? fm.contentsOfDirectory(
-        at: batchDirectory,
-        includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey],
-        options: [.skipsHiddenFiles]
-      )
-    else { return }
+  func retryLocalBatches() async -> LocalBatchReplayResult {
+    guard !localOnly else {
+      return LocalBatchReplayResult(submitted: 0, failed: 0)
+    }
 
-    var files: [LocalBatchFile] = []
+    var submitted = 0
+    var failed = 0
+    for file in localBatchFiles().sorted(by: { $0.modified < $1.modified }) {
+      let data: Data
+      do {
+        data = try readLocalBatch(file)
+      } catch {
+        failed += 1
+        Log.submit.warning(
+          "local batch replay read failed file=\(file.url.lastPathComponent, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+        )
+        continue
+      }
+
+      do {
+        let (_, resp) = try await client.data(for: makeRequest(body: data))
+        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+          failed += 1
+          Log.submit.warning(
+            "local batch replay status=\(http.statusCode, privacy: .public) file=\(file.url.lastPathComponent, privacy: .public)"
+          )
+          continue
+        }
+        try? FileManager.default.removeItem(at: file.url)
+        submitted += 1
+      } catch {
+        failed += 1
+        Log.submit.warning(
+          "local batch replay failed file=\(file.url.lastPathComponent, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+        )
+      }
+    }
+    await sweepLocalBatches()
+    return LocalBatchReplayResult(submitted: submitted, failed: failed)
+  }
+
+  func sweepLocalBatches() async {
     let now = Date()
     let cutoff = now.addingTimeInterval(-maxBatchAgeDays * 24 * 60 * 60)
     var removedCount = 0
     var removedBytes: Int64 = 0
 
-    for url in urls where url.pathExtension == "json" {
-      guard
-        let values = try? url.resourceValues(forKeys: [
-          .contentModificationDateKey,
-          .fileSizeKey,
-          .isRegularFileKey,
-        ]),
-        values.isRegularFile == true
-      else { continue }
-
-      let modified = values.contentModificationDate ?? .distantPast
-      let size = Int64(values.fileSize ?? 0)
-      if modified < cutoff {
-        if (try? fm.removeItem(at: url)) != nil {
+    var files: [LocalBatchFile] = []
+    for file in localBatchFiles() {
+      if file.modified < cutoff {
+        if (try? FileManager.default.removeItem(at: file.url)) != nil {
           removedCount += 1
-          removedBytes += size
+          removedBytes += file.size
         }
-        continue
+      } else {
+        files.append(file)
       }
-      files.append(LocalBatchFile(url: url, modified: modified, size: size))
     }
 
     var totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
     for file in files.sorted(by: { $0.modified < $1.modified }) where totalBytes > maxBatchBytes {
-      if (try? fm.removeItem(at: file.url)) != nil {
+      if (try? FileManager.default.removeItem(at: file.url)) != nil {
         totalBytes -= file.size
         removedCount += 1
         removedBytes += file.size
@@ -289,9 +338,8 @@ actor Submitter {
   }
 
   private func localBatchFiles() -> [LocalBatchFile] {
-    let fm = FileManager.default
     guard
-      let urls = try? fm.contentsOfDirectory(
+      let urls = try? FileManager.default.contentsOfDirectory(
         at: batchDirectory,
         includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey],
         options: [.skipsHiddenFiles]
@@ -299,7 +347,8 @@ actor Submitter {
     else { return [] }
 
     var files: [LocalBatchFile] = []
-    for url in urls where url.pathExtension == "json" {
+    for url in urls
+    where url.pathExtension == "json" || url.pathExtension == LocalBatchCryptor.encryptedExtension {
       guard
         let values = try? url.resourceValues(forKeys: [
           .contentModificationDateKey,
@@ -312,10 +361,22 @@ actor Submitter {
         LocalBatchFile(
           url: url,
           modified: values.contentModificationDate ?? .distantPast,
-          size: Int64(values.fileSize ?? 0)
+          size: Int64(values.fileSize ?? 0),
+          encrypted: url.pathExtension == LocalBatchCryptor.encryptedExtension
         ))
     }
     return files
+  }
+
+  private func readLocalBatch(_ file: LocalBatchFile) throws -> Data {
+    let data = try Data(contentsOf: file.url)
+    guard file.encrypted else {
+      return data
+    }
+    guard let localBatchCryptor else {
+      throw LocalBatchCryptoError.invalidCiphertext
+    }
+    return try localBatchCryptor.decrypt(data)
   }
 }
 
@@ -323,6 +384,12 @@ private struct LocalBatchFile {
   let url: URL
   let modified: Date
   let size: Int64
+  let encrypted: Bool
+}
+
+struct LocalBatchReplayResult: Sendable, Equatable {
+  let submitted: Int
+  let failed: Int
 }
 
 struct LocalBatchStats: Sendable, Equatable {

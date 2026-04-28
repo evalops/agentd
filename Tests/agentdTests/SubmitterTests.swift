@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 
+@preconcurrency import CryptoKit
 import Foundation
 import XCTest
 
@@ -128,6 +129,33 @@ final class SubmitterTests: XCTestCase {
     let encoded = try JSONEncoder().encode(cfg)
     let root = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
     XCTAssertNotNil(root["secretBroker"])
+  }
+
+  func testAgentConfigDefaultsEncryptedBatchesForRemoteMode() throws {
+    let remote = """
+      {
+        "deviceId": "device_1",
+        "organizationId": "org_1",
+        "endpoint": "https://chronicle.example.com/chronicle.v1.ChronicleService/SubmitBatch",
+        "localOnly": false,
+        "auth": {
+          "mode": "bearer",
+          "keychainService": "agentd",
+          "keychainAccount": "chronicle"
+        }
+      }
+      """.data(using: .utf8)!
+    let local = """
+      {
+        "deviceId": "device_1",
+        "organizationId": "org_1",
+        "endpoint": "http://127.0.0.1:8787/chronicle.v1.ChronicleService/SubmitBatch",
+        "localOnly": true
+      }
+      """.data(using: .utf8)!
+
+    XCTAssertTrue(try JSONDecoder().decode(AgentConfig.self, from: remote).encryptLocalBatches)
+    XCTAssertFalse(try JSONDecoder().decode(AgentConfig.self, from: local).encryptLocalBatches)
   }
 
   func testEndpointPolicyRejectsPlainHttpRemoteAndAllowsHttpsAndLoopback() throws {
@@ -340,10 +368,114 @@ final class SubmitterTests: XCTestCase {
     }
   }
 
+  func testEncryptedLocalBatchPersistenceDoesNotWritePlaintext() async throws {
+    let dir = try makeTemporaryDirectory()
+    let submitter = try Submitter(
+      endpoint: URL(string: "http://127.0.0.1:8787/submit")!,
+      localOnly: true,
+      batchDirectory: dir,
+      deviceId: "device_1",
+      encryptLocalBatches: true,
+      localBatchKeyProvider: StaticLocalBatchKeyProvider.one
+    )
+
+    let result = await submitter.submit(Self.batch())
+
+    XCTAssertEqual(result, .persistedLocal)
+    let files = try FileManager.default.contentsOfDirectory(
+      at: dir,
+      includingPropertiesForKeys: nil
+    )
+    let file = try XCTUnwrap(files.first)
+    XCTAssertEqual(file.pathExtension, LocalBatchCryptor.encryptedExtension)
+    let stored = try Data(contentsOf: file)
+    XCTAssertFalse(String(data: stored, encoding: .utf8)?.contains("ChronicleService") ?? false)
+    let plaintext = try LocalBatchCryptor(key: StaticLocalBatchKeyProvider.one.key).decrypt(stored)
+    let root = try XCTUnwrap(JSONSerialization.jsonObject(with: plaintext) as? [String: Any])
+    XCTAssertNotNil(root["batch"])
+  }
+
+  func testEncryptedLocalBatchFailsClosedWithWrongKey() async throws {
+    let dir = try makeTemporaryDirectory()
+    let submitter = try Submitter(
+      endpoint: URL(string: "http://127.0.0.1:8787/submit")!,
+      localOnly: true,
+      batchDirectory: dir,
+      deviceId: "device_1",
+      encryptLocalBatches: true,
+      localBatchKeyProvider: StaticLocalBatchKeyProvider.one
+    )
+    _ = await submitter.submit(Self.batch())
+
+    let file = try XCTUnwrap(
+      FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil).first)
+    let stored = try Data(contentsOf: file)
+    XCTAssertThrowsError(
+      try LocalBatchCryptor(key: StaticLocalBatchKeyProvider.two.key).decrypt(stored)
+    )
+  }
+
+  func testEncryptedLocalBatchReplaySubmitsAndRemovesQueuedFile() async throws {
+    let dir = try makeTemporaryDirectory()
+    let failing = try Submitter(
+      endpoint: URL(string: "https://chronicle.example.com/submit")!,
+      localOnly: false,
+      authMode: .bearer(keychainService: "svc", keychainAccount: "acct"),
+      credentialProvider: StubCredentialProvider(token: "token"),
+      client: StubHTTPClient.status(503, body: #"{"error":"down"}"#),
+      batchDirectory: dir,
+      deviceId: "device_1",
+      encryptLocalBatches: true,
+      localBatchKeyProvider: StaticLocalBatchKeyProvider.one
+    )
+
+    let persistedResult = await failing.submit(Self.batch())
+    XCTAssertEqual(persistedResult, .persistedLocal)
+    let encrypted = try XCTUnwrap(
+      FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil).first)
+    XCTAssertEqual(encrypted.pathExtension, LocalBatchCryptor.encryptedExtension)
+
+    let recorder = RequestRecorder()
+    let replaying = try Submitter(
+      endpoint: URL(string: "https://chronicle.example.com/submit")!,
+      localOnly: false,
+      authMode: .bearer(keychainService: "svc", keychainAccount: "acct"),
+      credentialProvider: StubCredentialProvider(token: "token"),
+      client: StubHTTPClient { request in
+        await recorder.record(request)
+        let body = try XCTUnwrap(request.httpBody)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertNotNil(root["batch"])
+        return (
+          Data(#"{"batchId":"batch_fixture"}"#.utf8),
+          Self.response(for: request.url!, statusCode: 200)
+        )
+      },
+      batchDirectory: dir,
+      deviceId: "device_1",
+      encryptLocalBatches: true,
+      localBatchKeyProvider: StaticLocalBatchKeyProvider.one
+    )
+
+    let replay = await replaying.retryLocalBatches()
+
+    XCTAssertEqual(replay, LocalBatchReplayResult(submitted: 1, failed: 0))
+    let requestCount = await recorder.count()
+    XCTAssertEqual(requestCount, 1)
+    let remaining = try FileManager.default.contentsOfDirectory(
+      at: dir,
+      includingPropertiesForKeys: nil
+    )
+    XCTAssertTrue(remaining.isEmpty)
+  }
+
   func testLocalBatchSweepRemovesOldFiles() async throws {
     let dir = try makeTemporaryDirectory()
     try writeBatchFile(
       dir.appendingPathComponent("old.json"), bytes: 10,
+      modified: Date(timeIntervalSinceNow: -8 * 24 * 60 * 60))
+    try writeBatchFile(
+      dir.appendingPathComponent("old.\(LocalBatchCryptor.encryptedExtension)"), bytes: 10,
       modified: Date(timeIntervalSinceNow: -8 * 24 * 60 * 60))
     try writeBatchFile(dir.appendingPathComponent("new.json"), bytes: 10, modified: Date())
     let submitter = try Submitter(
@@ -356,6 +488,9 @@ final class SubmitterTests: XCTestCase {
     await submitter.sweepLocalBatches()
     XCTAssertFalse(
       FileManager.default.fileExists(atPath: dir.appendingPathComponent("old.json").path))
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: dir.appendingPathComponent("old.\(LocalBatchCryptor.encryptedExtension)").path))
     XCTAssertTrue(
       FileManager.default.fileExists(atPath: dir.appendingPathComponent("new.json").path))
   }
@@ -492,5 +627,20 @@ struct StubHTTPClient: HTTPClient {
 
   static func failure(_ error: Error) -> StubHTTPClient {
     StubHTTPClient { _ in throw error }
+  }
+}
+
+struct StaticLocalBatchKeyProvider: @unchecked Sendable, LocalBatchKeyProviding {
+  static let one = StaticLocalBatchKeyProvider(seed: 0x11)
+  static let two = StaticLocalBatchKeyProvider(seed: 0x22)
+
+  let key: SymmetricKey
+
+  init(seed: UInt8) {
+    key = SymmetricKey(data: Data(repeating: seed, count: 32))
+  }
+
+  func localBatchKey(deviceId: String) throws -> SymmetricKey {
+    key
   }
 }
