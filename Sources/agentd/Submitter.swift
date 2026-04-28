@@ -15,6 +15,8 @@ actor Submitter {
   private let maxBatchBytes: Int64
   private let maxBatchAgeDays: Double
   private let localBatchCryptor: LocalBatchCryptor?
+  private var isRetryingLocalBatches = false
+  private var retryLocalBatchesNeedsRerun = false
 
   init(
     endpoint: URL,
@@ -275,6 +277,25 @@ actor Submitter {
       return LocalBatchReplayResult(submitted: 0, failed: 0)
     }
 
+    if isRetryingLocalBatches {
+      retryLocalBatchesNeedsRerun = true
+      return LocalBatchReplayResult(submitted: 0, failed: 0)
+    }
+
+    isRetryingLocalBatches = true
+    defer { isRetryingLocalBatches = false }
+    var submitted = 0
+    var failed = 0
+    repeat {
+      retryLocalBatchesNeedsRerun = false
+      let result = await retryLocalBatchesPass()
+      submitted += result.submitted
+      failed += result.failed
+    } while retryLocalBatchesNeedsRerun
+    return LocalBatchReplayResult(submitted: submitted, failed: failed)
+  }
+
+  private func retryLocalBatchesPass() async -> LocalBatchReplayResult {
     var submitted = 0
     var failed = 0
     for file in localBatchFiles().sorted(by: { $0.modified < $1.modified }) {

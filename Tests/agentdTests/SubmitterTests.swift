@@ -469,6 +469,61 @@ final class SubmitterTests: XCTestCase {
     XCTAssertTrue(remaining.isEmpty)
   }
 
+  func testConcurrentReplayRequestsDoNotResubmitQueuedBatch() async throws {
+    let dir = try makeTemporaryDirectory()
+    let failing = try Submitter(
+      endpoint: URL(string: "https://chronicle.example.com/submit")!,
+      localOnly: false,
+      authMode: .bearer(keychainService: "svc", keychainAccount: "acct"),
+      credentialProvider: StubCredentialProvider(token: "token"),
+      client: StubHTTPClient.status(503, body: #"{"error":"down"}"#),
+      batchDirectory: dir
+    )
+
+    let persistedResult = await failing.submit(Self.batch(id: "queued_batch"))
+    XCTAssertEqual(persistedResult, .persistedLocal)
+
+    let replayStarted = AsyncSignal()
+    let releaseReplay = AsyncGate()
+    let recorder = StringRecorder()
+    let replaying = try Submitter(
+      endpoint: URL(string: "https://chronicle.example.com/submit")!,
+      localOnly: false,
+      authMode: .bearer(keychainService: "svc", keychainAccount: "acct"),
+      credentialProvider: StubCredentialProvider(token: "token"),
+      client: StubHTTPClient { request in
+        let body = try XCTUnwrap(request.httpBody)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let batch = try XCTUnwrap(root["batch"] as? [String: Any])
+        let batchId = try XCTUnwrap(batch["batchId"] as? String)
+        await recorder.record(batchId)
+        await replayStarted.signal()
+        await releaseReplay.wait()
+        return (Data(), Self.response(for: request.url!, statusCode: 200))
+      },
+      batchDirectory: dir
+    )
+
+    let firstReplay = Task { await replaying.retryLocalBatches() }
+    await replayStarted.wait()
+    let secondReplay = Task { await replaying.retryLocalBatches() }
+    await Task.yield()
+    await releaseReplay.open()
+
+    let firstResult = await firstReplay.value
+    let secondResult = await secondReplay.value
+    let results = [firstResult, secondResult]
+    XCTAssertEqual(secondResult, LocalBatchReplayResult(submitted: 0, failed: 0))
+    XCTAssertEqual(results.reduce(0) { $0 + $1.submitted }, 1)
+    XCTAssertEqual(results.reduce(0) { $0 + $1.failed }, 0)
+    XCTAssertEqual(await recorder.values(), ["queued_batch"])
+    let remaining = try FileManager.default.contentsOfDirectory(
+      at: dir,
+      includingPropertiesForKeys: nil
+    )
+    XCTAssertTrue(remaining.isEmpty)
+  }
+
   func testSuccessfulSubmitRetriesQueuedLocalBatches() async throws {
     let dir = try makeTemporaryDirectory()
     let failing = try Submitter(
@@ -650,6 +705,37 @@ final class SubmitterTests: XCTestCase {
       FileManager.default.fileExists(atPath: dir.appendingPathComponent("newest.json").path))
   }
 
+  func testLocalBatchKeyProviderReadsExistingKeyAfterDuplicateStore() throws {
+    final class DuplicateKeychain: @unchecked Sendable {
+      let persisted = Data(repeating: 0xAA, count: 32)
+      private(set) var readCount = 0
+
+      func read() -> Data? {
+        defer { readCount += 1 }
+        return readCount == 0 ? nil : persisted
+      }
+
+      func store(_ key: Data) -> Bool {
+        XCTAssertEqual(key.count, 32)
+        return false
+      }
+    }
+
+    let keychain = DuplicateKeychain()
+    let provider = KeychainLocalBatchKeyProvider(
+      service: "test.local-batch-key",
+      readKeyData: { _, _ in keychain.read() },
+      storeKeyData: { _, _, key in keychain.store(key) },
+      generateRandomKeyData: { Data(repeating: 0xBB, count: 32) }
+    )
+
+    let key = try provider.localBatchKey(deviceId: "device_1")
+    let keyData = key.withUnsafeBytes { Data($0) }
+
+    XCTAssertEqual(keyData, keychain.persisted)
+    XCTAssertEqual(keychain.readCount, 2)
+  }
+
   static func batch(id: String = "batch_fixture") -> Batch {
     Batch(
       batchId: id,
@@ -724,6 +810,50 @@ actor StringRecorder {
 
   func values() -> [String] {
     recordedValues
+  }
+}
+
+actor AsyncSignal {
+  private var isSignaled = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    guard !isSignaled else { return }
+    await withCheckedContinuation { continuation in
+      waiters.append(continuation)
+    }
+  }
+
+  func signal() {
+    guard !isSignaled else { return }
+    isSignaled = true
+    let currentWaiters = waiters
+    waiters.removeAll()
+    for waiter in currentWaiters {
+      waiter.resume()
+    }
+  }
+}
+
+actor AsyncGate {
+  private var isOpen = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    guard !isOpen else { return }
+    await withCheckedContinuation { continuation in
+      waiters.append(continuation)
+    }
+  }
+
+  func open() {
+    guard !isOpen else { return }
+    isOpen = true
+    let currentWaiters = waiters
+    waiters.removeAll()
+    for waiter in currentWaiters {
+      waiter.resume()
+    }
   }
 }
 

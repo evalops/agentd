@@ -9,13 +9,48 @@ protocol LocalBatchKeyProviding: Sendable {
 }
 
 struct KeychainLocalBatchKeyProvider: LocalBatchKeyProviding {
-  private let service = "dev.evalops.agentd.local-batch-key"
+  private let service: String
+  private let readKeyData: @Sendable (String, String) throws -> Data?
+  private let storeKeyData: @Sendable (String, String, Data) throws -> Bool
+  private let generateRandomKeyData: @Sendable () throws -> Data
+
+  init(
+    service: String = "dev.evalops.agentd.local-batch-key",
+    readKeyData: @escaping @Sendable (String, String) throws -> Data? = Self.readKeyData,
+    storeKeyData: @escaping @Sendable (String, String, Data) throws -> Bool = Self.storeKeyData,
+    generateRandomKeyData: @escaping @Sendable () throws -> Data = Self.generateRandomKeyData
+  ) {
+    self.service = service
+    self.readKeyData = readKeyData
+    self.storeKeyData = storeKeyData
+    self.generateRandomKeyData = generateRandomKeyData
+  }
 
   func localBatchKey(deviceId: String) throws -> SymmetricKey {
     if let existing = try readKey(deviceId: deviceId) {
       return SymmetricKey(data: existing)
     }
 
+    let bytes = try generateRandomKeyData()
+    if try storeKey(bytes, deviceId: deviceId) {
+      return SymmetricKey(data: bytes)
+    }
+
+    guard let existing = try readKey(deviceId: deviceId) else {
+      throw LocalBatchCryptoError.keychainReadFailed(errSecItemNotFound)
+    }
+    return SymmetricKey(data: existing)
+  }
+
+  private func readKey(deviceId: String) throws -> Data? {
+    try readKeyData(service, deviceId)
+  }
+
+  private func storeKey(_ key: Data, deviceId: String) throws -> Bool {
+    try storeKeyData(service, deviceId, key)
+  }
+
+  private static func generateRandomKeyData() throws -> Data {
     var bytes = Data(count: 32)
     let status = bytes.withUnsafeMutableBytes { buffer in
       SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
@@ -23,11 +58,10 @@ struct KeychainLocalBatchKeyProvider: LocalBatchKeyProviding {
     guard status == errSecSuccess else {
       throw LocalBatchCryptoError.keyGenerationFailed(status)
     }
-    try storeKey(bytes, deviceId: deviceId)
-    return SymmetricKey(data: bytes)
+    return bytes
   }
 
-  private func readKey(deviceId: String) throws -> Data? {
+  private static func readKeyData(service: String, deviceId: String) throws -> Data? {
     let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
@@ -46,7 +80,7 @@ struct KeychainLocalBatchKeyProvider: LocalBatchKeyProviding {
     return data
   }
 
-  private func storeKey(_ key: Data, deviceId: String) throws {
+  private static func storeKeyData(service: String, deviceId: String, key: Data) throws -> Bool {
     let attributes: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
@@ -55,7 +89,12 @@ struct KeychainLocalBatchKeyProvider: LocalBatchKeyProviding {
       kSecValueData as String: key,
     ]
     let status = SecItemAdd(attributes as CFDictionary, nil)
-    guard status == errSecSuccess || status == errSecDuplicateItem else {
+    switch status {
+    case errSecSuccess:
+      return true
+    case errSecDuplicateItem:
+      return false
+    default:
       throw LocalBatchCryptoError.keychainWriteFailed(status)
     }
   }
