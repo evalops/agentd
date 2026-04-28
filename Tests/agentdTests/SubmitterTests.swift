@@ -17,8 +17,10 @@ final class SubmitterTests: XCTestCase {
       projectId: "project_1",
       repository: "evalops/platform",
       metadata: [
+        "evalops_context_version": "evalops.context.v1",
         "maestro_session_id": "session_1",
         "agent_run_id": "run_1",
+        "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
       ],
       startedAt: Date(timeIntervalSince1970: 1),
       endedAt: Date(timeIntervalSince1970: 2),
@@ -51,8 +53,11 @@ final class SubmitterTests: XCTestCase {
     XCTAssertNil(encodedBatch["orgId"])
     XCTAssertNotNil(encodedBatch["captureWindow"])
     let metadata = try XCTUnwrap(encodedBatch["metadata"] as? [String: String])
+    XCTAssertEqual(metadata["evalops_context_version"], "evalops.context.v1")
     XCTAssertEqual(metadata["maestro_session_id"], "session_1")
     XCTAssertEqual(metadata["agent_run_id"], "run_1")
+    XCTAssertEqual(
+      metadata["traceparent"], "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01")
 
     let frames = try XCTUnwrap(encodedBatch["frames"] as? [[String: Any]])
     XCTAssertEqual(frames.first?["perceptualHash"] as? String, "42")
@@ -111,7 +116,9 @@ final class SubmitterTests: XCTestCase {
         "endpoint": "http://127.0.0.1:8787/chronicle.v1.ChronicleService/SubmitBatch",
         "localOnly": true,
         "metadata": {
+          " evalops_context_version ": " evalops.context.v1 ",
           " maestro_session_id ": " session_1 ",
+          "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
           "empty_value": " ",
           "agent_run_id": "run_1"
         }
@@ -119,14 +126,20 @@ final class SubmitterTests: XCTestCase {
       """.data(using: .utf8)!
 
     let cfg = try JSONDecoder().decode(AgentConfig.self, from: data)
+    XCTAssertEqual(cfg.metadata["evalops_context_version"], "evalops.context.v1")
     XCTAssertEqual(cfg.metadata["maestro_session_id"], "session_1")
     XCTAssertEqual(cfg.metadata["agent_run_id"], "run_1")
+    XCTAssertEqual(
+      cfg.metadata["traceparent"], "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01")
     XCTAssertNil(cfg.metadata["empty_value"])
 
     let encoded = try JSONEncoder().encode(cfg)
     let root = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
     let metadata = try XCTUnwrap(root["metadata"] as? [String: String])
+    XCTAssertEqual(metadata["evalops_context_version"], "evalops.context.v1")
     XCTAssertEqual(metadata["maestro_session_id"], "session_1")
+    XCTAssertEqual(
+      metadata["traceparent"], "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01")
   }
 
   func testAgentConfigDecodesSecretBroker() throws {
