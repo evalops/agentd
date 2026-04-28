@@ -16,6 +16,10 @@ final class SubmitterTests: XCTestCase {
       userId: "user_1",
       projectId: "project_1",
       repository: "evalops/platform",
+      metadata: [
+        "maestro_session_id": "session_1",
+        "agent_run_id": "run_1",
+      ],
       startedAt: Date(timeIntervalSince1970: 1),
       endedAt: Date(timeIntervalSince1970: 2),
       frames: [
@@ -46,6 +50,9 @@ final class SubmitterTests: XCTestCase {
     XCTAssertEqual(encodedBatch["projectId"] as? String, "project_1")
     XCTAssertNil(encodedBatch["orgId"])
     XCTAssertNotNil(encodedBatch["captureWindow"])
+    let metadata = try XCTUnwrap(encodedBatch["metadata"] as? [String: String])
+    XCTAssertEqual(metadata["maestro_session_id"], "session_1")
+    XCTAssertEqual(metadata["agent_run_id"], "run_1")
 
     let frames = try XCTUnwrap(encodedBatch["frames"] as? [[String: Any]])
     XCTAssertEqual(frames.first?["perceptualHash"] as? String, "42")
@@ -94,6 +101,32 @@ final class SubmitterTests: XCTestCase {
 
     let cfg = try JSONDecoder().decode(AgentConfig.self, from: data)
     XCTAssertEqual(cfg.organizationId, "org_new")
+  }
+
+  func testAgentConfigDecodesAndCleansMetadata() throws {
+    let data = """
+      {
+        "deviceId": "device_1",
+        "organizationId": "org_1",
+        "endpoint": "http://127.0.0.1:8787/chronicle.v1.ChronicleService/SubmitBatch",
+        "localOnly": true,
+        "metadata": {
+          " maestro_session_id ": " session_1 ",
+          "empty_value": " ",
+          "agent_run_id": "run_1"
+        }
+      }
+      """.data(using: .utf8)!
+
+    let cfg = try JSONDecoder().decode(AgentConfig.self, from: data)
+    XCTAssertEqual(cfg.metadata["maestro_session_id"], "session_1")
+    XCTAssertEqual(cfg.metadata["agent_run_id"], "run_1")
+    XCTAssertNil(cfg.metadata["empty_value"])
+
+    let encoded = try JSONEncoder().encode(cfg)
+    let root = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    let metadata = try XCTUnwrap(root["metadata"] as? [String: String])
+    XCTAssertEqual(metadata["maestro_session_id"], "session_1")
   }
 
   func testAgentConfigDecodesSecretBroker() throws {

@@ -148,6 +148,7 @@ struct Batch: Sendable, Codable {
   let userId: String?
   let projectId: String?
   let repository: String?
+  let metadata: [String: String]
   let startedAt: Date
   let endedAt: Date
   let captureWindow: CaptureWindow
@@ -162,6 +163,7 @@ struct Batch: Sendable, Codable {
     userId: String?,
     projectId: String?,
     repository: String?,
+    metadata: [String: String] = [:],
     startedAt: Date,
     endedAt: Date,
     captureWindow: CaptureWindow? = nil,
@@ -175,6 +177,7 @@ struct Batch: Sendable, Codable {
     self.userId = userId
     self.projectId = projectId
     self.repository = repository
+    self.metadata = metadata
     self.startedAt = startedAt
     self.endedAt = endedAt
     self.captureWindow = captureWindow ?? CaptureWindow(startedAt: startedAt, endedAt: endedAt)
@@ -190,6 +193,7 @@ struct Batch: Sendable, Codable {
     case userId
     case projectId
     case repository
+    case metadata
     case startedAt
     case endedAt
     case captureWindow
@@ -209,6 +213,7 @@ struct Batch: Sendable, Codable {
       userId: try container.decodeIfPresent(String.self, forKey: .userId),
       projectId: try container.decodeIfPresent(String.self, forKey: .projectId),
       repository: try container.decodeIfPresent(String.self, forKey: .repository),
+      metadata: try container.decodeIfPresent([String: String].self, forKey: .metadata) ?? [:],
       startedAt: startedAt,
       endedAt: endedAt,
       captureWindow: try container.decodeIfPresent(CaptureWindow.self, forKey: .captureWindow),
@@ -435,6 +440,7 @@ actor FramePipeline {
       userId: config.userId,
       projectId: config.projectId,
       repository: config.repository,
+      metadata: config.metadata,
       startedAt: startedAt,
       endedAt: Date(),
       frames: pending,

@@ -115,6 +115,12 @@ agentd reads and writes `~/.evalops/agentd/config.json`. Important defaults:
   Broker mode when omitted
 - `auth: { "mode": "none" }`
 
+Optional `metadata` entries are copied into every Chronicle `FrameBatch` and
+Secret Broker wrap request. Use this for non-secret correlation IDs such as
+`maestro_session_id`, `agent_run_id`, `tool_execution_id`, `trace_id`,
+`task_id`, and `source_issue`; Platform preserves these as receipt evidence and
+Cerebro indexes them as Chronicle graph labels.
+
 Remote mode requires `localOnly: false`, an HTTPS or loopback endpoint, and an
 auth mode. Bearer auth references a Keychain item:
 
