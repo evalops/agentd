@@ -36,6 +36,10 @@ This is the desktop component of the work tracked in
 - Optional Secret Broker mode wraps the frame batch into a broker artifact
   (`chronicle_frame_batch_json`) first, then sends only the artifact/session
   reference to Chronicle so Platform can unwrap, meter, and revoke through ASB.
+- Remote mode registers the device with Chronicle, sends periodic heartbeats
+  with pending local queue pressure, and applies server-returned capture policy
+  without requiring an app restart. Local hard-deny safety rails remain
+  fail-closed even when a remote policy allows a bundle or path.
 - Menu-bar UI: pause/resume (`⌃⌥⌘P`), flush now (`⌃⌥⌘F`), reveal batches dir,
   quit.
 
@@ -137,6 +141,30 @@ session token reference. The endpoint is the Secret Broker HTTP
 If wrapping fails, agentd persists the original inline `SubmitBatchRequest`
 locally and does not write the broker session token to disk.
 
+When `localOnly` is `false`, agentd derives the other Chronicle control-plane
+RPC URLs from `endpoint`. For example:
+
+```json
+{
+  "endpoint": "https://chronicle.example.com/chronicle.v1.ChronicleService/SubmitBatch",
+  "localOnly": false,
+  "auth": {
+    "mode": "bearer",
+    "keychainService": "dev.evalops.agentd",
+    "keychainAccount": "chronicle"
+  }
+}
+```
+
+On boot, agentd calls `RegisterDevice` with app version, hostname, capture mode,
+Secret Broker mode, and local permission preflight metadata. Every 30 seconds it
+calls `Heartbeat` with pending in-memory frames plus local fallback batch count
+and bytes. `RegisterDevice` and `Heartbeat` responses may include a
+`CapturePolicy`; agentd applies allowlist, denylist, path-deny, pause-window,
+batch interval, and max-frame settings at runtime. Server `PAUSED` capture mode
+stops capture until a later policy resumes it, while manual user pause still
+wins locally.
+
 ## What's next
 
 - Consume generated `chronicle.v1` Swift types when the platform SDK publishes
@@ -153,6 +181,7 @@ locally and does not write the broker session token to disk.
 ```
 Sources/agentd/
   main.swift              # NSApplication + AppController boot
+  ChronicleControl.swift  # RegisterDevice/Heartbeat + policy response client
   Config.swift            # ~/.evalops/agentd/config.json
   CaptureService.swift    # SCStream pipeline
   WindowContext.swift     # AX + NSWorkspace probe

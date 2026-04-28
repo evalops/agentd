@@ -218,6 +218,11 @@ actor FramePipeline {
     droppedBackpressure += 1
   }
 
+  func pendingStats() -> PendingFrameStats {
+    let pendingBytes = pending.reduce(Int64(0)) { $0 + Int64($1.bytesPng) }
+    return PendingFrameStats(frameCount: pending.count, estimatedBytes: pendingBytes)
+  }
+
   func consume(_ frame: CapturedFrame, context: WindowContext?) async {
     guard let ctx = context else { return }
 
@@ -363,4 +368,9 @@ actor FramePipeline {
     let digest = SHA256.hash(data: Data(s.utf8))
     return digest.map { String(format: "%02x", $0) }.joined()
   }
+}
+
+struct PendingFrameStats: Sendable, Equatable {
+  let frameCount: Int
+  let estimatedBytes: Int64
 }

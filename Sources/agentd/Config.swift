@@ -154,6 +154,54 @@ struct AgentConfig: Codable, Sendable {
     self.secretBroker = secretBroker
   }
 
+  func applying(policy: CapturePolicy) -> AgentConfig {
+    var next = self
+
+    if !policy.allowedBundleIds.isEmpty {
+      next.allowedBundleIds = policy.allowedBundleIds
+    }
+
+    next.deniedBundleIds = Self.mergePolicyList(
+      defaultValues: Self.defaultDeniedBundleIds,
+      currentValues: deniedBundleIds,
+      policyValues: policy.deniedBundleIds
+    )
+    next.deniedPathPrefixes = Self.mergePolicyList(
+      defaultValues: Self.defaultDeniedPathPrefixes,
+      currentValues: deniedPathPrefixes,
+      policyValues: policy.deniedPathPrefixes
+    )
+    next.pauseWindowTitlePatterns = Self.mergePolicyList(
+      defaultValues: Self.defaultPauseWindowPatterns,
+      currentValues: pauseWindowTitlePatterns,
+      policyValues: policy.pauseWindowTitlePatterns
+    )
+
+    if policy.minBatchIntervalSeconds > 0 {
+      next.batchIntervalSeconds = max(batchIntervalSeconds, Double(policy.minBatchIntervalSeconds))
+    }
+    if policy.maxFramesPerBatch > 0 {
+      next.maxFramesPerBatch = policy.maxFramesPerBatch
+    }
+
+    return next
+  }
+
+  private static func mergePolicyList(
+    defaultValues: [String],
+    currentValues: [String],
+    policyValues: [String]
+  ) -> [String] {
+    var seen = Set<String>()
+    var merged: [String] = []
+    for value in defaultValues + currentValues + policyValues where !value.isEmpty {
+      if seen.insert(value).inserted {
+        merged.append(value)
+      }
+    }
+    return merged
+  }
+
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     deviceId = try container.decode(String.self, forKey: .deviceId)
