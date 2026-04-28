@@ -7,6 +7,7 @@ import Foundation
 final class MenuBarController: NSObject {
   private let statusItem: NSStatusItem
   private let menu = NSMenu()
+  private var aboutItem: NSMenuItem?
   private var paused: Bool = false
   private let onPauseToggle: @Sendable (Bool) -> Void
   private let onFlushNow: @Sendable () -> Void
@@ -60,6 +61,7 @@ final class MenuBarController: NSObject {
     let about = NSMenuItem(
       title: "agentd \(Bundle.main.appVersion) — local-only", action: nil, keyEquivalent: "")
     about.isEnabled = false
+    aboutItem = about
     menu.addItem(about)
 
     menu.addItem(.separator())
@@ -90,10 +92,28 @@ final class MenuBarController: NSObject {
   @objc private func flush() { onFlushNow() }
   @objc private func reveal() { onOpenBatchesDir() }
   @objc private func quit() { onQuit() }
+
+  func setStatus(paused: Bool, detail: String, localOnly: Bool, policyVersion: String?) {
+    self.paused = paused
+    if let button = statusItem.button {
+      button.image = NSImage(
+        systemSymbolName: paused ? "pause.circle" : "circle.fill",
+        accessibilityDescription: paused ? "agentd paused" : "agentd recording"
+      )
+      button.image?.isTemplate = true
+      button.toolTip = "agentd — \(detail)"
+    }
+    if let item = menu.items.first {
+      item.title = paused ? "Resume Capture" : "Pause Capture"
+    }
+    let mode = localOnly ? "local-only" : "managed"
+    let policy = policyVersion.map { " policy \($0)" } ?? ""
+    aboutItem?.title = "agentd \(Bundle.main.appVersion) — \(mode)\(policy)"
+  }
 }
 
 extension Bundle {
-  fileprivate var appVersion: String {
+  var appVersion: String {
     (infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.0.0"
   }
 }

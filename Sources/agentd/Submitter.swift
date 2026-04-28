@@ -279,12 +279,55 @@ actor Submitter {
       )
     }
   }
+
+  func localBatchStats() async -> LocalBatchStats {
+    let files = localBatchFiles()
+    return LocalBatchStats(
+      fileCount: files.count,
+      bytes: files.reduce(Int64(0)) { $0 + $1.size }
+    )
+  }
+
+  private func localBatchFiles() -> [LocalBatchFile] {
+    let fm = FileManager.default
+    guard
+      let urls = try? fm.contentsOfDirectory(
+        at: batchDirectory,
+        includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey],
+        options: [.skipsHiddenFiles]
+      )
+    else { return [] }
+
+    var files: [LocalBatchFile] = []
+    for url in urls where url.pathExtension == "json" {
+      guard
+        let values = try? url.resourceValues(forKeys: [
+          .contentModificationDateKey,
+          .fileSizeKey,
+          .isRegularFileKey,
+        ]),
+        values.isRegularFile == true
+      else { continue }
+      files.append(
+        LocalBatchFile(
+          url: url,
+          modified: values.contentModificationDate ?? .distantPast,
+          size: Int64(values.fileSize ?? 0)
+        ))
+    }
+    return files
+  }
 }
 
 private struct LocalBatchFile {
   let url: URL
   let modified: Date
   let size: Int64
+}
+
+struct LocalBatchStats: Sendable, Equatable {
+  let fileCount: Int
+  let bytes: Int64
 }
 
 protocol HTTPClient: Sendable {
@@ -412,7 +455,7 @@ struct KeychainCredentialProvider: SubmitterCredentialProviding {
   }
 }
 
-private final class MTLSURLSessionDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+final class MTLSURLSessionDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
   private let identity: SecIdentity
 
   init(identity: SecIdentity) {
