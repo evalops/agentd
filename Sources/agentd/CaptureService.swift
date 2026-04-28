@@ -11,6 +11,8 @@ struct CapturedFrame: Sendable {
   let timestamp: Date
   let cgImage: CGImage
   let displayId: CGDirectDisplayID
+  let displayScale: Double?
+  let mainDisplay: Bool
 }
 
 actor CaptureService: NSObject {
@@ -55,6 +57,8 @@ actor CaptureService: NSObject {
     let output = FrameOutput(
       ciContext: ciContext,
       displayId: display.displayID,
+      displayScale: Self.displayScale(display.displayID),
+      mainDisplay: display.displayID == CGMainDisplayID(),
       onFrame: onFrame,
       onFrameDropped: onFrameDropped
     )
@@ -91,20 +95,35 @@ actor CaptureService: NSObject {
         "capture fps update failed: \(error.localizedDescription, privacy: .public)")
     }
   }
+
+  private static func displayScale(_ displayId: CGDirectDisplayID) -> Double? {
+    let pixelWidth = CGDisplayPixelsWide(displayId)
+    guard pixelWidth > 0 else { return nil }
+    let boundsWidth = CGDisplayBounds(displayId).width
+    guard boundsWidth > 0 else { return nil }
+    return Double(pixelWidth) / Double(boundsWidth)
+  }
 }
 
 private final class FrameOutput: NSObject, SCStreamOutput, @unchecked Sendable {
   let ciContext: CIContext
   let displayId: CGDirectDisplayID
+  let displayScale: Double?
+  let mainDisplay: Bool
   let dispatcher: BufferedFrameDispatcher
 
   init(
-    ciContext: CIContext, displayId: CGDirectDisplayID,
+    ciContext: CIContext,
+    displayId: CGDirectDisplayID,
+    displayScale: Double?,
+    mainDisplay: Bool,
     onFrame: @escaping @Sendable (CapturedFrame) async -> Void,
     onFrameDropped: @escaping @Sendable () async -> Void
   ) {
     self.ciContext = ciContext
     self.displayId = displayId
+    self.displayScale = displayScale
+    self.mainDisplay = mainDisplay
     self.dispatcher = BufferedFrameDispatcher(onFrame: onFrame, onDropped: onFrameDropped)
   }
 
@@ -117,7 +136,13 @@ private final class FrameOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     else { return }
     let ci = CIImage(cvPixelBuffer: pixelBuffer)
     guard let cg = ciContext.createCGImage(ci, from: ci.extent) else { return }
-    let frame = CapturedFrame(timestamp: Date(), cgImage: cg, displayId: displayId)
+    let frame = CapturedFrame(
+      timestamp: Date(),
+      cgImage: cg,
+      displayId: displayId,
+      displayScale: displayScale,
+      mainDisplay: mainDisplay
+    )
     dispatcher.yield(frame)
   }
 }

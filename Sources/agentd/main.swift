@@ -15,9 +15,12 @@ final class AppController {
   private var userPaused = false
   private var captureRunning = false
   private var controlState = ChronicleControlState()
+  private var scheduledPauseWindows: [ScheduledPauseWindow] = []
+  private var policySource: String?
   private var flushTimer: Timer?
   private var idleTimer: Timer?
   private var heartbeatTimer: Timer?
+  private var pauseWindowTimer: Timer?
   private var idleMode = false
 
   init() {
@@ -97,10 +100,27 @@ final class AppController {
         _ = self
       },
       onOpenBatchesDir: {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-          .appendingPathComponent(".evalops/agentd/batches")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        NSWorkspace.shared.activateFileViewerSelecting([dir])
+        Task { @MainActor [weak self] in
+          guard let self else { return }
+          let dir = await self.submitter.batchDirectoryURL()
+          try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+          NSWorkspace.shared.activateFileViewerSelecting([dir])
+        }
+      },
+      onOpenDiagnostics: { [weak self] in
+        Task { @MainActor in await self?.openDiagnosticsReport() }
+      },
+      onDeleteQueuedBatches: { [weak self] in
+        Task { @MainActor in await self?.deleteQueuedBatches() }
+      },
+      onLaunchAtLoginToggle: { enabled in
+        do {
+          try LaunchAtLoginController.setEnabled(enabled)
+        } catch {
+          Log.app.error(
+            "launch-at-login update failed: \(error.localizedDescription, privacy: .public)"
+          )
+        }
       },
       onQuit: {
         Task { @MainActor in NSApp.terminate(nil) }
@@ -217,11 +237,14 @@ final class AppController {
   private func makeHeartbeatRequest() async -> HeartbeatRequest {
     let pending = await pipeline.pendingStats()
     let local = await submitter.localBatchStats()
+    let pauseState = effectivePauseState()
     return HeartbeatRequest(
       deviceId: config.deviceId,
       organizationId: config.organizationId,
       pendingFrameCount: pending.frameCount + local.fileCount,
-      pendingBytes: pending.estimatedBytes + local.bytes
+      pendingBytes: pending.estimatedBytes + local.bytes,
+      paused: pauseState.paused,
+      pauseReason: pauseState.reason
     )
   }
 
@@ -234,6 +257,10 @@ final class AppController {
     if !policy.policyVersion.isEmpty {
       controlState.lastPolicyVersion = policy.policyVersion
     }
+    if !policy.sourcePolicyRef.isEmpty {
+      policySource = policy.sourcePolicyRef
+    }
+    scheduledPauseWindows = policy.scheduledPauseWindows
     if policy.captureMode == .paused {
       controlState.serverPaused = true
       controlState.serverPauseReason =
@@ -256,11 +283,13 @@ final class AppController {
       await capture.updateFps(idleMode ? config.idleFps : config.captureFps)
     }
     await reconcileCaptureState()
+    schedulePauseWindowTimer()
     updateMenuStatus()
   }
 
   private func reconcileCaptureState() async {
-    let shouldPause = userPaused || controlState.serverPaused
+    let pauseState = effectivePauseState()
+    let shouldPause = pauseState.paused
     if shouldPause, captureRunning {
       await capture.stop()
       captureRunning = false
@@ -274,6 +303,71 @@ final class AppController {
         Log.app.error("capture start failed: \(error.localizedDescription, privacy: .public)")
       }
     }
+    schedulePauseWindowTimer()
+    updateMenuStatus()
+  }
+
+  private func effectivePauseState(now: Date = Date()) -> EffectivePauseState {
+    PauseStateResolver.resolve(
+      userPaused: userPaused,
+      scheduledWindows: scheduledPauseWindows,
+      policyPaused: controlState.serverPaused,
+      policyReason: controlState.serverPauseReason,
+      now: now
+    )
+  }
+
+  private func schedulePauseWindowTimer(now: Date = Date()) {
+    pauseWindowTimer?.invalidate()
+    guard
+      let transition = PauseStateResolver.nextTransition(
+        after: now,
+        scheduledWindows: scheduledPauseWindows
+      )
+    else {
+      pauseWindowTimer = nil
+      return
+    }
+    let interval = max(0.25, transition.timeIntervalSince(now) + 0.1)
+    pauseWindowTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) {
+      [weak self] _ in
+      Task { @MainActor in await self?.reconcileCaptureState() }
+    }
+  }
+
+  private func openDiagnosticsReport() async {
+    let permissions = PermissionSnapshot.current(promptForAccessibility: false)
+    let pending = await pipeline.pendingStats()
+    let localStats = await submitter.localBatchStats()
+    let localBatches = await submitter.localBatchSummaries()
+    let lastSubmitResult = await submitter.lastSubmitResult()
+    let snapshot = DiagnosticsSnapshot(
+      generatedAt: Date(),
+      appVersion: Bundle.main.appVersion,
+      captureState: effectivePauseState().detail,
+      permissions: permissions,
+      config: config,
+      policyVersion: controlState.lastPolicyVersion,
+      policySource: policySource,
+      controlError: controlState.lastError,
+      pendingStats: pending,
+      localBatchStats: localStats,
+      localBatches: localBatches,
+      lastSubmitResult: lastSubmitResult
+    )
+    do {
+      let dir = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".evalops/agentd/diagnostics")
+      let report = try DiagnosticsReport.write(snapshot, directory: dir)
+      NSWorkspace.shared.activateFileViewerSelecting([report])
+    } catch {
+      Log.app.error("diagnostics report failed: \(error.localizedDescription, privacy: .public)")
+    }
+  }
+
+  private func deleteQueuedBatches() async {
+    let removed = await submitter.deleteLocalBatches()
+    Log.submit.notice("deleted queued local batches count=\(removed, privacy: .public)")
     updateMenuStatus()
   }
 
@@ -292,10 +386,9 @@ final class AppController {
 
   private func updateMenuStatus() {
     let detail: String
-    if userPaused {
-      detail = "paused by user"
-    } else if controlState.serverPaused {
-      detail = "paused by policy"
+    let pauseState = effectivePauseState()
+    if pauseState.paused {
+      detail = pauseState.detail
     } else if captureRunning {
       detail = controlState.registered ? "capturing, registered" : "capturing"
     } else if let error = controlState.lastError {
@@ -304,7 +397,7 @@ final class AppController {
       detail = "stopped"
     }
     menuBar?.setStatus(
-      paused: userPaused || controlState.serverPaused || !captureRunning,
+      paused: pauseState.paused || !captureRunning,
       detail: detail,
       localOnly: config.localOnly,
       policyVersion: controlState.lastPolicyVersion

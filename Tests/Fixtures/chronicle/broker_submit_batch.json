@@ -1,0 +1,6 @@
+{
+  "localOnly": false,
+  "secretBrokerArtifactId": "artifact_1",
+  "secretBrokerGrantId": "grant_1",
+  "secretBrokerSessionToken": "broker-session"
+}

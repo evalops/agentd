@@ -1,0 +1,7 @@
+{
+  "policy": {
+    "captureMode": "CAPTURE_MODE_UNSPECIFIED",
+    "policyVersion": "malformed_missing_required_windows_shape",
+    "scheduledPauseWindows": "not-an-array"
+  }
+}

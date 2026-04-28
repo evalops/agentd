@@ -1,0 +1,15 @@
+{
+  "policy": {
+    "captureMode": "CAPTURE_MODE_PAUSED",
+    "policyVersion": "policy_pause",
+    "scheduledPauseWindows": [
+      {
+        "endsAt": "2026-04-28T17:00:00Z",
+        "id": "meeting_1",
+        "reason": "customer meeting",
+        "startsAt": "2026-04-28T16:00:00Z"
+      }
+    ],
+    "sourcePolicyRef": "calendar://meeting_1"
+  }
+}

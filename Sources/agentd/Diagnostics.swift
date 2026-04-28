@@ -1,0 +1,121 @@
+// SPDX-License-Identifier: BUSL-1.1
+
+import Foundation
+
+struct DiagnosticsSnapshot: Sendable {
+  let generatedAt: Date
+  let appVersion: String
+  let captureState: String
+  let permissions: PermissionSnapshot
+  let config: AgentConfig
+  let policyVersion: String?
+  let policySource: String?
+  let controlError: String?
+  let pendingStats: PendingFrameStats
+  let localBatchStats: LocalBatchStats
+  let localBatches: [LocalBatchSummary]
+  let lastSubmitResult: String?
+}
+
+enum DiagnosticsReport {
+  static func markdown(_ snapshot: DiagnosticsSnapshot) -> String {
+    var lines: [String] = []
+    lines.append("# agentd diagnostics")
+    lines.append("")
+    lines.append("- Generated: \(iso(snapshot.generatedAt))")
+    lines.append("- App version: \(snapshot.appVersion)")
+    lines.append("- Capture state: \(snapshot.captureState)")
+    lines.append("- Accessibility trusted: \(snapshot.permissions.accessibilityTrusted)")
+    lines.append("- Screen capture preflight: \(snapshot.permissions.screenCaptureTrusted)")
+    lines.append("- Mode: \(snapshot.config.localOnly ? "local-only" : "managed")")
+    lines.append("- Secret Broker: \(snapshot.config.secretBroker == nil ? "disabled" : "enabled")")
+    lines.append("- Endpoint: \(redactEndpoint(snapshot.config.endpoint))")
+    lines.append("- Policy version: \(snapshot.policyVersion ?? "none")")
+    lines.append("- Policy source: \(redact(snapshot.policySource ?? "none"))")
+    lines.append("- Last control error: \(redact(snapshot.controlError ?? "none"))")
+    lines.append("- Pending in-memory frames: \(snapshot.pendingStats.frameCount)")
+    lines.append("- Pending in-memory bytes: \(snapshot.pendingStats.estimatedBytes)")
+    lines.append("- Queued local batches: \(snapshot.localBatchStats.fileCount)")
+    lines.append("- Queued local bytes: \(snapshot.localBatchStats.bytes)")
+    lines.append("- Last submit result: \(snapshot.lastSubmitResult ?? "unknown")")
+    lines.append("")
+    lines.append("## Capture Policy")
+    lines.append("")
+    lines.append("- Allowed bundles: \(snapshot.config.allowedBundleIds.count)")
+    lines.append("- Denied bundles: \(snapshot.config.deniedBundleIds.count)")
+    lines.append(
+      "- Denied path prefixes: \(snapshot.config.deniedPathPrefixes.map(redactPath).joined(separator: ", "))"
+    )
+    lines.append(
+      "- Pause title patterns: \(snapshot.config.pauseWindowTitlePatterns.map(redact).joined(separator: ", "))"
+    )
+    lines.append("- Batch interval seconds: \(snapshot.config.batchIntervalSeconds)")
+    lines.append("- Max frames per batch: \(snapshot.config.maxFramesPerBatch)")
+    lines.append("- Max OCR text chars: \(snapshot.config.maxOcrTextChars)")
+    lines.append("- Adaptive OCR min chars: \(snapshot.config.adaptiveOcrMinChars)")
+    lines.append("")
+    lines.append("## Queued Batches")
+    lines.append("")
+    if snapshot.localBatches.isEmpty {
+      lines.append("No queued local batches.")
+    } else {
+      lines.append("| Batch | Modified | Bytes | Encrypted |")
+      lines.append("| --- | --- | ---: | --- |")
+      for batch in snapshot.localBatches {
+        lines.append(
+          "| \(redact(batch.batchId)) | \(iso(batch.modified)) | \(batch.bytes) | \(batch.encrypted) |"
+        )
+      }
+    }
+    lines.append("")
+    lines.append(
+      "OCR text, secrets, document paths, bearer tokens, and full endpoint query strings are omitted."
+    )
+    lines.append("")
+    return lines.joined(separator: "\n")
+  }
+
+  static func write(_ snapshot: DiagnosticsSnapshot, directory: URL) throws -> URL {
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let url = directory.appendingPathComponent(
+      "diagnostics-\(fileTimestamp(snapshot.generatedAt)).md")
+    try markdown(snapshot).write(to: url, atomically: true, encoding: .utf8)
+    try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    return url
+  }
+
+  static func redact(_ value: String) -> String {
+    guard !value.isEmpty else { return value }
+    if SecretScrubber.evaluate(value) != .clean {
+      return "[redacted]"
+    }
+    return value.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+  }
+
+  static func redactPath(_ value: String) -> String {
+    if value.contains("/") || value.hasPrefix(".") {
+      return value.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+    }
+    return redact(value)
+  }
+
+  private static func redactEndpoint(_ endpoint: URL) -> String {
+    var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
+    components?.query = nil
+    components?.user = nil
+    components?.password = nil
+    return components?.url?.absoluteString ?? "[redacted]"
+  }
+
+  private static func iso(_ date: Date) -> String {
+    ISO8601DateFormatter().string(from: date)
+  }
+
+  private static func fileTimestamp(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = "yyyyMMdd-HHmmss"
+    return formatter.string(from: date)
+  }
+}

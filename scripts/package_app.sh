@@ -58,5 +58,21 @@ if [[ "$notarized" == "1" ]] && command -v spctl >/dev/null 2>&1; then
   spctl -a -t exec -vv "$app_path"
 fi
 
+zip_sha256="$(shasum -a 256 "$zip_path" | awk '{print $1}')"
+app_binary_sha256="$(shasum -a 256 "$app_path/Contents/MacOS/$product" | awk '{print $1}')"
+cat > "$dist_dir/update-channel.json" <<JSON
+{
+  "product": "$product",
+  "appName": "$app_name",
+  "configuration": "$configuration",
+  "archive": "$(basename "$zip_path")",
+  "archiveSha256": "$zip_sha256",
+  "appBinarySha256": "$app_binary_sha256",
+  "codesignIdentity": "$identity",
+  "notarized": $notarized
+}
+JSON
+
 echo "Packaged $app_path"
 echo "Archive $zip_path"
+echo "Update metadata $dist_dir/update-channel.json"
