@@ -179,6 +179,8 @@ final class AppController {
       }
       if let policy = response.policy {
         await apply(policy: policy)
+      } else {
+        await reconcileCaptureState()
       }
     } catch {
       controlState.lastError = error.localizedDescription
