@@ -136,6 +136,34 @@ final class ChronicleControlTests: XCTestCase {
     XCTAssertEqual(next.maxFramesPerBatch, 8)
   }
 
+  func testPolicyReapplyFromLocalBaselineAllowsServerPolicyToShrink() {
+    var base = PipelineTests.config(maxFramesPerBatch: 24)
+    base.deniedBundleIds = ["com.local.Secret"]
+    base.batchIntervalSeconds = 30
+
+    let first = base.applying(
+      policy: CapturePolicy(
+        policyVersion: "policy_1",
+        deniedBundleIds: ["com.remote.Secret"],
+        minBatchIntervalSeconds: 120
+      ))
+    let second = base.applying(
+      policy: CapturePolicy(
+        policyVersion: "policy_2",
+        deniedBundleIds: ["com.remote.NewSecret"],
+        minBatchIntervalSeconds: 45
+      ))
+
+    XCTAssertTrue(first.deniedBundleIds.contains("com.local.Secret"))
+    XCTAssertTrue(first.deniedBundleIds.contains("com.remote.Secret"))
+    XCTAssertEqual(first.batchIntervalSeconds, 120)
+
+    XCTAssertTrue(second.deniedBundleIds.contains("com.local.Secret"))
+    XCTAssertFalse(second.deniedBundleIds.contains("com.remote.Secret"))
+    XCTAssertTrue(second.deniedBundleIds.contains("com.remote.NewSecret"))
+    XCTAssertEqual(second.batchIntervalSeconds, 45)
+  }
+
   func testControlStateReportsDevicePauseChangesWithoutPolicy() {
     var state = ChronicleControlState()
 

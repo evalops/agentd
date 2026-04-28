@@ -5,6 +5,7 @@ import Foundation
 
 @MainActor
 final class AppController {
+  private let policyBaseConfig: AgentConfig
   private var config: AgentConfig
   private let pipeline: FramePipeline
   private let submitter: Submitter
@@ -21,6 +22,7 @@ final class AppController {
 
   init() {
     let cfg = ConfigStore.load()
+    self.policyBaseConfig = cfg
     self.config = cfg
 
     let submitter: Submitter
@@ -239,7 +241,7 @@ final class AppController {
       controlState.serverPauseReason = nil
     }
 
-    let next = config.applying(policy: policy)
+    let next = policyBaseConfig.applying(policy: policy)
     let intervalChanged = next.batchIntervalSeconds != config.batchIntervalSeconds
     config = next
     await pipeline.updateConfig(next)
