@@ -1,0 +1,16 @@
+name: Codex Rails
+
+on:
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - ".agents/skills/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/pull_request_template.md"
+      - ".github/workflows/codex-rails-check.yml"
+
+jobs:
+  validate:
+    uses: evalops/.github/.github/workflows/codex-rails-check.yml@main
+    with:
+      require_agents: true
