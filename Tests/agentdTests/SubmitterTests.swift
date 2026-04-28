@@ -469,6 +469,49 @@ final class SubmitterTests: XCTestCase {
     XCTAssertTrue(remaining.isEmpty)
   }
 
+  func testSuccessfulSubmitRetriesQueuedLocalBatches() async throws {
+    let dir = try makeTemporaryDirectory()
+    let failing = try Submitter(
+      endpoint: URL(string: "https://chronicle.example.com/submit")!,
+      localOnly: false,
+      authMode: .bearer(keychainService: "svc", keychainAccount: "acct"),
+      credentialProvider: StubCredentialProvider(token: "token"),
+      client: StubHTTPClient.status(503, body: #"{"error":"down"}"#),
+      batchDirectory: dir
+    )
+
+    let persistedResult = await failing.submit(Self.batch(id: "queued_batch"))
+    XCTAssertEqual(persistedResult, .persistedLocal)
+
+    let recorder = StringRecorder()
+    let replaying = try Submitter(
+      endpoint: URL(string: "https://chronicle.example.com/submit")!,
+      localOnly: false,
+      authMode: .bearer(keychainService: "svc", keychainAccount: "acct"),
+      credentialProvider: StubCredentialProvider(token: "token"),
+      client: StubHTTPClient { request in
+        let body = try XCTUnwrap(request.httpBody)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let batch = try XCTUnwrap(root["batch"] as? [String: Any])
+        let batchId = try XCTUnwrap(batch["batchId"] as? String)
+        await recorder.record(batchId)
+        return (Data(), Self.response(for: request.url!, statusCode: 200))
+      },
+      batchDirectory: dir
+    )
+
+    let result = await replaying.submit(Self.batch(id: "live_batch"))
+
+    XCTAssertEqual(result, .submitted(nil))
+    let submittedBatchIds = await recorder.values()
+    XCTAssertEqual(submittedBatchIds, ["live_batch", "queued_batch"])
+    let remaining = try FileManager.default.contentsOfDirectory(
+      at: dir,
+      includingPropertiesForKeys: nil
+    )
+    XCTAssertTrue(remaining.isEmpty)
+  }
+
   func testEncryptedReplayUsesSecretBrokerWrapping() async throws {
     let dir = try makeTemporaryDirectory()
     let failing = try Submitter(
@@ -669,6 +712,18 @@ actor RequestRecorder {
 
   func count() -> Int {
     requests.count
+  }
+}
+
+actor StringRecorder {
+  private var recordedValues: [String] = []
+
+  func record(_ value: String) {
+    recordedValues.append(value)
+  }
+
+  func values() -> [String] {
+    recordedValues
   }
 }
 
