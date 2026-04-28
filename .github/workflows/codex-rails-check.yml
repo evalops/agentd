@@ -9,8 +9,11 @@ on:
       - ".github/pull_request_template.md"
       - ".github/workflows/codex-rails-check.yml"
 
+permissions:
+  contents: read
+
 jobs:
   validate:
-    uses: evalops/.github/.github/workflows/codex-rails-check.yml@main
+    uses: evalops/.github/.github/workflows/codex-rails-check.yml@a51e5155fa81f5722475a390c4110362167c821c
     with:
       require_agents: true
