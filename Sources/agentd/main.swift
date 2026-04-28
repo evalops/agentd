@@ -281,8 +281,12 @@ final class AppController {
     flushTimer?.invalidate()
     let interval = max(1, config.batchIntervalSeconds)
     let pipeline = pipeline
+    let submitter = submitter
     flushTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
-      Task { await pipeline.flush() }
+      Task {
+        await pipeline.flush()
+        _ = await submitter.retryLocalBatches()
+      }
     }
   }
 

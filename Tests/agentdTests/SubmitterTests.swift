@@ -469,6 +469,90 @@ final class SubmitterTests: XCTestCase {
     XCTAssertTrue(remaining.isEmpty)
   }
 
+  func testEncryptedReplayUsesSecretBrokerWrapping() async throws {
+    let dir = try makeTemporaryDirectory()
+    let failing = try Submitter(
+      endpoint: URL(
+        string: "https://chronicle.example.com/chronicle.v1.ChronicleService/SubmitBatch")!,
+      localOnly: false,
+      authMode: .bearer(keychainService: "agentd", keychainAccount: "chronicle"),
+      secretBroker: SecretBrokerConfig(
+        endpoint: URL(string: "https://secret-broker.example.com/v1/artifacts:wrap")!,
+        sessionTokenKeychainService: "agentd",
+        sessionTokenKeychainAccount: "secret-broker"
+      ),
+      credentialProvider: StubCredentialProvider(tokens: [
+        "agentd:chronicle": "chronicle-token",
+        "agentd:secret-broker": "broker-session",
+      ]),
+      client: StubHTTPClient.status(503, body: #"{"error":"down"}"#),
+      batchDirectory: dir,
+      deviceId: "device_1",
+      encryptLocalBatches: true,
+      localBatchKeyProvider: StaticLocalBatchKeyProvider.one
+    )
+
+    let persistedResult = await failing.submit(Self.batch())
+    XCTAssertEqual(persistedResult, .persistedLocal)
+
+    let recorder = RequestRecorder()
+    let replaying = try Submitter(
+      endpoint: URL(
+        string: "https://chronicle.example.com/chronicle.v1.ChronicleService/SubmitBatch")!,
+      localOnly: false,
+      authMode: .bearer(keychainService: "agentd", keychainAccount: "chronicle"),
+      secretBroker: SecretBrokerConfig(
+        endpoint: URL(string: "https://secret-broker.example.com/v1/artifacts:wrap")!,
+        sessionTokenKeychainService: "agentd",
+        sessionTokenKeychainAccount: "secret-broker"
+      ),
+      credentialProvider: StubCredentialProvider(tokens: [
+        "agentd:chronicle": "chronicle-token",
+        "agentd:secret-broker": "broker-session",
+      ]),
+      client: StubHTTPClient { request in
+        await recorder.record(request)
+        let url = try XCTUnwrap(request.url)
+        let body = try XCTUnwrap(request.httpBody)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+
+        if url.host == "secret-broker.example.com" {
+          let secretData = try XCTUnwrap(root["secret_data"] as? [String: String])
+          XCTAssertNotNil(secretData["chronicle_frame_batch_json"])
+          return (
+            Data(#"{"grant_id":"grant_1","artifact_id":"art_1"}"#.utf8),
+            Self.response(for: url, statusCode: 200)
+          )
+        }
+
+        XCTAssertEqual(url.host, "chronicle.example.com")
+        XCTAssertNil(root["batch"])
+        XCTAssertEqual(root["secretBrokerSessionToken"] as? String, "broker-session")
+        XCTAssertEqual(root["secretBrokerArtifactId"] as? String, "art_1")
+        XCTAssertEqual(root["secretBrokerGrantId"] as? String, "grant_1")
+        return (
+          Data(#"{"batchId":"batch_fixture","artifactId":"art_1"}"#.utf8),
+          Self.response(for: url, statusCode: 200)
+        )
+      },
+      batchDirectory: dir,
+      deviceId: "device_1",
+      encryptLocalBatches: true,
+      localBatchKeyProvider: StaticLocalBatchKeyProvider.one
+    )
+
+    let replay = await replaying.retryLocalBatches()
+
+    XCTAssertEqual(replay, LocalBatchReplayResult(submitted: 1, failed: 0))
+    let requestCount = await recorder.count()
+    XCTAssertEqual(requestCount, 2)
+    let remaining = try FileManager.default.contentsOfDirectory(
+      at: dir,
+      includingPropertiesForKeys: nil
+    )
+    XCTAssertTrue(remaining.isEmpty)
+  }
+
   func testLocalBatchSweepRemovesOldFiles() async throws {
     let dir = try makeTemporaryDirectory()
     try writeBatchFile(

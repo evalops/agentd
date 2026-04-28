@@ -113,35 +113,53 @@ actor Submitter {
     }
 
     let submitData: Data
-    if let secretBroker {
-      do {
-        let wrapped = try await wrapFrameBatch(batch, using: secretBroker)
-        submitData = try encodeBrokerSubmitBatchRequest(
-          sessionToken: secretBroker.sessionToken,
-          artifactId: wrapped.artifactId,
-          grantId: wrapped.grantId,
-          localOnly: localOnly
-        )
-      } catch {
-        Log.submit.warning(
-          "secret broker wrap failed batch=\(batch.batchId, privacy: .public) error=\(error.localizedDescription, privacy: .public) — falling back to local"
-        )
-        await persistLocal(batch.batchId, data: fallbackData)
-        return .persistedLocal
-      }
-    } else {
-      submitData = fallbackData
+    do {
+      submitData = try await makeRemoteSubmitData(for: batch, fallbackData: fallbackData)
+    } catch {
+      Log.submit.warning(
+        "remote submit prepare failed batch=\(batch.batchId, privacy: .public) error=\(error.localizedDescription, privacy: .public) — falling back to local"
+      )
+      await persistLocal(batch.batchId, data: fallbackData)
+      return .persistedLocal
     }
 
-    let req = makeRequest(body: submitData)
+    let result = await submitRemoteData(submitData, batchId: batch.batchId)
+    if case .submitted = result {
+      let replay = await retryLocalBatches()
+      if replay.submitted > 0 || replay.failed > 0 {
+        Log.submit.info(
+          "local batch replay submitted=\(replay.submitted, privacy: .public) failed=\(replay.failed, privacy: .public)"
+        )
+      }
+      return result
+    }
+
+    await persistLocal(batch.batchId, data: fallbackData)
+    return .persistedLocal
+  }
+
+  private func makeRemoteSubmitData(for batch: Batch, fallbackData: Data) async throws -> Data {
+    guard let secretBroker else {
+      return fallbackData
+    }
+    let wrapped = try await wrapFrameBatch(batch, using: secretBroker)
+    return try encodeBrokerSubmitBatchRequest(
+      sessionToken: secretBroker.sessionToken,
+      artifactId: wrapped.artifactId,
+      grantId: wrapped.grantId,
+      localOnly: localOnly
+    )
+  }
+
+  private func submitRemoteData(_ data: Data, batchId: String) async -> SubmitResult {
+    let req = makeRequest(body: data)
     do {
       let (body, resp) = try await client.data(for: req)
       if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
         Log.submit.warning(
-          "submit status=\(http.statusCode, privacy: .public) batch=\(batch.batchId, privacy: .public) — falling back to local"
+          "submit status=\(http.statusCode, privacy: .public) batch=\(batchId, privacy: .public)"
         )
-        await persistLocal(batch.batchId, data: fallbackData)
-        return .persistedLocal
+        return .failed
       } else {
         let response: SubmitBatchResponse?
         if body.isEmpty {
@@ -151,14 +169,13 @@ actor Submitter {
             response = try JSONDecoder().decode(SubmitBatchResponse.self, from: body)
           } catch {
             Log.submit.warning(
-              "submit malformed response batch=\(batch.batchId, privacy: .public) — falling back to local"
+              "submit malformed response batch=\(batchId, privacy: .public)"
             )
-            await persistLocal(batch.batchId, data: fallbackData)
-            return .persistedLocal
+            return .failed
           }
         }
         Log.submit.info(
-          "submit ok batch=\(batch.batchId, privacy: .public) frames=\(batch.frames.count, privacy: .public)"
+          "submit ok batch=\(batchId, privacy: .public)"
         )
         await sweepLocalBatches()
         return .submitted(response)
@@ -166,8 +183,7 @@ actor Submitter {
     } catch {
       Log.submit.warning(
         "submit error \(error.localizedDescription, privacy: .public) — falling back to local")
-      await persistLocal(batch.batchId, data: fallbackData)
-      return .persistedLocal
+      return .failed
     }
   }
 
@@ -273,26 +289,39 @@ actor Submitter {
         continue
       }
 
+      let submitData: Data
       do {
-        let (_, resp) = try await client.data(for: makeRequest(body: data))
-        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-          failed += 1
-          Log.submit.warning(
-            "local batch replay status=\(http.statusCode, privacy: .public) file=\(file.url.lastPathComponent, privacy: .public)"
-          )
-          continue
-        }
-        try? FileManager.default.removeItem(at: file.url)
-        submitted += 1
+        submitData = try await makeReplaySubmitData(from: data)
       } catch {
         failed += 1
         Log.submit.warning(
-          "local batch replay failed file=\(file.url.lastPathComponent, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+          "local batch replay prepare failed file=\(file.url.lastPathComponent, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
         )
+        continue
+      }
+
+      let result = await submitRemoteData(submitData, batchId: file.batchId)
+      switch result {
+      case .submitted:
+        try? FileManager.default.removeItem(at: file.url)
+        submitted += 1
+      case .failed, .persistedLocal:
+        failed += 1
       }
     }
     await sweepLocalBatches()
     return LocalBatchReplayResult(submitted: submitted, failed: failed)
+  }
+
+  private func makeReplaySubmitData(from persistedData: Data) async throws -> Data {
+    guard secretBroker != nil else {
+      return persistedData
+    }
+    let request = try decodeSubmitBatchRequest(persistedData)
+    guard let batch = request.batch else {
+      throw SubmitterError.missingPersistedBatch
+    }
+    return try await makeRemoteSubmitData(for: batch, fallbackData: persistedData)
   }
 
   func sweepLocalBatches() async {
@@ -385,6 +414,10 @@ private struct LocalBatchFile {
   let modified: Date
   let size: Int64
   let encrypted: Bool
+
+  var batchId: String {
+    url.deletingPathExtension().lastPathComponent
+  }
 }
 
 struct LocalBatchReplayResult: Sendable, Equatable {
@@ -589,6 +622,7 @@ enum SubmitterError: Error, LocalizedError {
   case invalidBatchPayload
   case secretBrokerStatus(Int)
   case malformedSecretBrokerResponse
+  case missingPersistedBatch
 
   var errorDescription: String? {
     switch self {
@@ -598,6 +632,8 @@ enum SubmitterError: Error, LocalizedError {
       return "secret broker wrap returned HTTP \(status)"
     case .malformedSecretBrokerResponse:
       return "secret broker wrap response did not include artifact and grant ids"
+    case .missingPersistedBatch:
+      return "persisted local batch did not include an inline batch payload"
     }
   }
 }
@@ -694,6 +730,12 @@ private func encodeSubmitBatchRequest(_ request: SubmitBatchRequest) throws -> D
   enc.dateEncodingStrategy = .iso8601
   enc.outputFormatting = [.sortedKeys]
   return try enc.encode(request)
+}
+
+private func decodeSubmitBatchRequest(_ data: Data) throws -> SubmitBatchRequest {
+  let dec = JSONDecoder()
+  dec.dateDecodingStrategy = .iso8601
+  return try dec.decode(SubmitBatchRequest.self, from: data)
 }
 
 func encodeFrameBatch(_ batch: Batch) throws -> Data {
