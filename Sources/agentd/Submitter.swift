@@ -222,6 +222,36 @@ actor Submitter {
     guard let payloadJSON = String(data: payload, encoding: .utf8) else {
       throw SubmitterError.invalidBatchPayload
     }
+    var metadata = batch.metadata
+    for reservedKey in [
+      "batch_id",
+      "device_id",
+      "organization_id",
+      "workspace_id",
+      "user_id",
+      "project_id",
+      "repository",
+      "source",
+    ] {
+      metadata.removeValue(forKey: reservedKey)
+    }
+    metadata["batch_id"] = batch.batchId
+    metadata["device_id"] = batch.deviceId
+    metadata["organization_id"] = batch.organizationId
+    if let workspaceId = batch.workspaceId {
+      metadata["workspace_id"] = workspaceId
+    }
+    if let userId = batch.userId {
+      metadata["user_id"] = userId
+    }
+    if let projectId = batch.projectId {
+      metadata["project_id"] = projectId
+    }
+    if let repository = batch.repository {
+      metadata["repository"] = repository
+    }
+    metadata["source"] = "agentd"
+
     let request = WrapArtifactRequest(
       sessionToken: secretBroker.sessionToken,
       tool: secretBroker.tool,
@@ -230,12 +260,7 @@ actor Submitter {
       ttlSeconds: secretBroker.ttlSeconds,
       reason: secretBroker.reason,
       secretData: ["chronicle_frame_batch_json": payloadJSON],
-      metadata: [
-        "batch_id": batch.batchId,
-        "device_id": batch.deviceId,
-        "organization_id": batch.organizationId,
-        "source": "agentd",
-      ]
+      metadata: metadata
     )
     let data = try encodeWrapArtifactRequest(request)
     let (body, resp) = try await client.data(
