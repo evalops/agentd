@@ -307,6 +307,8 @@ actor FramePipeline {
   private var config: AgentConfig
   private let ocr: any OCRRecognizing
   private var dedupWindow = DedupWindow(capacity: 16, threshold: 5)
+  private var sparseFrameStore: SparseFrameStore?
+  private var sparseFrameStoreOptions: SparseFrameStoreOptions?
 
   private var pending: [ProcessedFrame] = []
   private var startedAt = Date()
@@ -326,10 +328,17 @@ actor FramePipeline {
     self.config = config
     self.ocr = ocr
     self.onBatch = onBatch
+    let options = Self.sparseFrameStoreOptions(config)
+    self.sparseFrameStoreOptions = options
+    self.sparseFrameStore = options.map(Self.makeSparseFrameStore)
   }
 
   func updateConfig(_ cfg: AgentConfig) {
     self.config = cfg
+    let options = Self.sparseFrameStoreOptions(cfg)
+    guard options != sparseFrameStoreOptions else { return }
+    sparseFrameStoreOptions = options
+    sparseFrameStore = options.map(Self.makeSparseFrameStore)
   }
 
   func recordBackpressureDrop() {
@@ -425,6 +434,15 @@ actor FramePipeline {
 
     pending.append(processed)
     dedupWindow.remember(phash)
+    if let sparseFrameStore {
+      do {
+        try await sparseFrameStore.record(image: frame.cgImage, processed: processed)
+      } catch {
+        Log.capture.error(
+          "sparse frame store write failed display=\(frame.displayId, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+        )
+      }
+    }
 
     if pending.count >= config.maxFramesPerBatch {
       await flush()
@@ -504,6 +522,23 @@ actor FramePipeline {
   private func sha256Hex(_ s: String) -> String {
     let digest = SHA256.hash(data: Data(s.utf8))
     return digest.map { String(format: "%02x", $0) }.joined()
+  }
+
+  private static func sparseFrameStoreOptions(_ config: AgentConfig) -> SparseFrameStoreOptions? {
+    guard let root = config.sparseFrameStoreRootURL else { return nil }
+    return SparseFrameStoreOptions(
+      root: root,
+      retentionHours: config.sparseFrameRetentionHours,
+      includeOcrText: config.sparseFrameIncludeOcrText
+    )
+  }
+
+  private static func makeSparseFrameStore(_ options: SparseFrameStoreOptions) -> SparseFrameStore {
+    return SparseFrameStore(
+      root: options.root,
+      retentionHours: options.retentionHours,
+      includeOcrText: options.includeOcrText
+    )
   }
 }
 

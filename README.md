@@ -122,6 +122,9 @@ agentd reads and writes `~/.evalops/agentd/config.json`. Important defaults:
 - `adaptiveOcrMinChars: 1024`
 - `adaptiveOcrBackpressureThreshold: 8`
 - `adaptiveOcrBacklogBytes: 67108864`
+- `sparseFrameStorageRoot: null`
+- `sparseFrameRetentionHours: 6`
+- `sparseFrameIncludeOcrText: false`
 - `batchIntervalSeconds: 30`
 - `maxFramesPerBatch: 24`
 - `maxOcrTextChars: 4096`
@@ -220,6 +223,15 @@ Diagnostics reports are written under `~/.evalops/agentd/diagnostics/` with
 `0o600` permissions. They summarize permissions, policy, queue pressure, local
 batches, active display frame/drop counters, and last submit health without OCR
 text or raw payloads.
+
+For Chronicle-style local introspection, set `sparseFrameStorageRoot` to a
+directory such as `~/.evalops/agentd/sparse-frames`. agentd then writes
+per-display `*.capture` markers, `*.capture.json` segment metadata,
+`*-latest.jpg` snapshots, sparse historical `frame-*.jpg` images, and OCR
+change sidecars for frames that have already passed allow/deny policy,
+deduplication, pause checks, and full-text secret scanning. OCR sidecars store
+hashes and lengths by default; set `sparseFrameIncludeOcrText: true` only for
+explicit local debugging where raw OCR persistence is acceptable.
 
 `scripts/mock_chronicle.py` provides a strict local mock Chronicle and Secret
 Broker harness. CI validates the golden fixtures in `Tests/Fixtures/chronicle`

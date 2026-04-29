@@ -79,6 +79,9 @@ struct AgentConfig: Codable, Sendable {
   var adaptiveOcrMinChars: Int
   var adaptiveOcrBackpressureThreshold: Int
   var adaptiveOcrBacklogBytes: Int64
+  var sparseFrameStorageRoot: String?
+  var sparseFrameRetentionHours: Double
+  var sparseFrameIncludeOcrText: Bool
   var localOnly: Bool
   var encryptLocalBatches: Bool
   var auth: AuthMode
@@ -112,6 +115,9 @@ struct AgentConfig: Codable, Sendable {
     case adaptiveOcrMinChars
     case adaptiveOcrBackpressureThreshold
     case adaptiveOcrBacklogBytes
+    case sparseFrameStorageRoot
+    case sparseFrameRetentionHours
+    case sparseFrameIncludeOcrText
     case localOnly
     case encryptLocalBatches
     case auth
@@ -145,6 +151,9 @@ struct AgentConfig: Codable, Sendable {
     adaptiveOcrMinChars: Int = 1024,
     adaptiveOcrBackpressureThreshold: Int = 8,
     adaptiveOcrBacklogBytes: Int64 = 64 * 1024 * 1024,
+    sparseFrameStorageRoot: String? = nil,
+    sparseFrameRetentionHours: Double = 6,
+    sparseFrameIncludeOcrText: Bool = false,
     localOnly: Bool,
     encryptLocalBatches: Bool? = nil,
     auth: AuthMode = .none,
@@ -176,6 +185,9 @@ struct AgentConfig: Codable, Sendable {
     self.adaptiveOcrMinChars = adaptiveOcrMinChars
     self.adaptiveOcrBackpressureThreshold = adaptiveOcrBackpressureThreshold
     self.adaptiveOcrBacklogBytes = adaptiveOcrBacklogBytes
+    self.sparseFrameStorageRoot = sparseFrameStorageRoot
+    self.sparseFrameRetentionHours = sparseFrameRetentionHours
+    self.sparseFrameIncludeOcrText = sparseFrameIncludeOcrText
     self.localOnly = localOnly
     self.encryptLocalBatches = encryptLocalBatches ?? (!localOnly || secretBroker != nil)
     self.auth = auth
@@ -287,6 +299,12 @@ struct AgentConfig: Codable, Sendable {
     adaptiveOcrBacklogBytes =
       try container.decodeIfPresent(Int64.self, forKey: .adaptiveOcrBacklogBytes)
       ?? 64 * 1024 * 1024
+    sparseFrameStorageRoot = try container.decodeIfPresent(
+      String.self, forKey: .sparseFrameStorageRoot)
+    sparseFrameRetentionHours =
+      try container.decodeIfPresent(Double.self, forKey: .sparseFrameRetentionHours) ?? 6
+    sparseFrameIncludeOcrText =
+      try container.decodeIfPresent(Bool.self, forKey: .sparseFrameIncludeOcrText) ?? false
     localOnly = try container.decodeIfPresent(Bool.self, forKey: .localOnly) ?? true
     auth = try container.decodeIfPresent(AuthMode.self, forKey: .auth) ?? .none
     secretBroker = try container.decodeIfPresent(SecretBrokerConfig.self, forKey: .secretBroker)
@@ -328,6 +346,9 @@ struct AgentConfig: Codable, Sendable {
     try container.encode(
       adaptiveOcrBackpressureThreshold, forKey: .adaptiveOcrBackpressureThreshold)
     try container.encode(adaptiveOcrBacklogBytes, forKey: .adaptiveOcrBacklogBytes)
+    try container.encodeIfPresent(sparseFrameStorageRoot, forKey: .sparseFrameStorageRoot)
+    try container.encode(sparseFrameRetentionHours, forKey: .sparseFrameRetentionHours)
+    try container.encode(sparseFrameIncludeOcrText, forKey: .sparseFrameIncludeOcrText)
     try container.encode(localOnly, forKey: .localOnly)
     try container.encode(encryptLocalBatches, forKey: .encryptLocalBatches)
     try container.encode(auth, forKey: .auth)
@@ -398,6 +419,9 @@ struct AgentConfig: Codable, Sendable {
       adaptiveOcrMinChars: 1024,
       adaptiveOcrBackpressureThreshold: 8,
       adaptiveOcrBacklogBytes: 64 * 1024 * 1024,
+      sparseFrameStorageRoot: nil,
+      sparseFrameRetentionHours: 6,
+      sparseFrameIncludeOcrText: false,
       localOnly: true,
       encryptLocalBatches: false,
       auth: .none,
