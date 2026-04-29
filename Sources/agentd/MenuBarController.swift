@@ -7,6 +7,9 @@ import Foundation
 final class MenuBarController: NSObject {
   private let statusItem: NSStatusItem
   private let menu = NSMenu()
+  private var permissionItem: NSMenuItem?
+  private var screenRecordingItem: NSMenuItem?
+  private var accessibilityItem: NSMenuItem?
   private var aboutItem: NSMenuItem?
   private var launchAtLoginItem: NSMenuItem?
   private var paused: Bool = false
@@ -15,6 +18,8 @@ final class MenuBarController: NSObject {
   private let onOpenBatchesDir: @Sendable () -> Void
   private let onOpenDiagnostics: @Sendable () -> Void
   private let onDeleteQueuedBatches: @Sendable () -> Void
+  private let onOpenScreenRecordingSettings: @Sendable () -> Void
+  private let onOpenAccessibilitySettings: @Sendable () -> Void
   private let onLaunchAtLoginToggle: @Sendable (Bool) -> Void
   private let onQuit: @Sendable () -> Void
 
@@ -24,6 +29,8 @@ final class MenuBarController: NSObject {
     onOpenBatchesDir: @escaping @Sendable () -> Void,
     onOpenDiagnostics: @escaping @Sendable () -> Void,
     onDeleteQueuedBatches: @escaping @Sendable () -> Void,
+    onOpenScreenRecordingSettings: @escaping @Sendable () -> Void,
+    onOpenAccessibilitySettings: @escaping @Sendable () -> Void,
     onLaunchAtLoginToggle: @escaping @Sendable (Bool) -> Void,
     onQuit: @escaping @Sendable () -> Void
   ) {
@@ -32,6 +39,8 @@ final class MenuBarController: NSObject {
     self.onOpenBatchesDir = onOpenBatchesDir
     self.onOpenDiagnostics = onOpenDiagnostics
     self.onDeleteQueuedBatches = onDeleteQueuedBatches
+    self.onOpenScreenRecordingSettings = onOpenScreenRecordingSettings
+    self.onOpenAccessibilitySettings = onOpenAccessibilitySettings
     self.onLaunchAtLoginToggle = onLaunchAtLoginToggle
     self.onQuit = onQuit
     self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -79,6 +88,32 @@ final class MenuBarController: NSObject {
 
     menu.addItem(.separator())
 
+    let permissionItem = NSMenuItem(
+      title: "Permissions: Checking…", action: nil, keyEquivalent: "")
+    permissionItem.isEnabled = false
+    self.permissionItem = permissionItem
+    menu.addItem(permissionItem)
+
+    let screenRecordingItem = NSMenuItem(
+      title: "Open Screen & System Audio Recording Settings",
+      action: #selector(openScreenRecordingSettings),
+      keyEquivalent: ""
+    )
+    screenRecordingItem.target = self
+    self.screenRecordingItem = screenRecordingItem
+    menu.addItem(screenRecordingItem)
+
+    let accessibilityItem = NSMenuItem(
+      title: "Open Accessibility Settings",
+      action: #selector(openAccessibilitySettings),
+      keyEquivalent: ""
+    )
+    accessibilityItem.target = self
+    self.accessibilityItem = accessibilityItem
+    menu.addItem(accessibilityItem)
+
+    menu.addItem(.separator())
+
     let launchItem = NSMenuItem(
       title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
     launchItem.target = self
@@ -122,6 +157,8 @@ final class MenuBarController: NSObject {
   @objc private func reveal() { onOpenBatchesDir() }
   @objc private func openDiagnostics() { onOpenDiagnostics() }
   @objc private func deleteQueuedBatches() { onDeleteQueuedBatches() }
+  @objc private func openScreenRecordingSettings() { onOpenScreenRecordingSettings() }
+  @objc private func openAccessibilitySettings() { onOpenAccessibilitySettings() }
   @objc private func toggleLaunchAtLogin() {
     let next = !(launchAtLoginItem?.state == .on)
     launchAtLoginItem?.state = next ? .on : .off
@@ -129,23 +166,44 @@ final class MenuBarController: NSObject {
   }
   @objc private func quit() { onQuit() }
 
-  func setStatus(paused: Bool, detail: String, localOnly: Bool, policyVersion: String?) {
+  func setStatus(
+    paused: Bool,
+    detail: String,
+    permissions: PermissionSnapshot,
+    localOnly: Bool,
+    policyVersion: String?
+  ) {
     self.paused = paused
+    let needsPermission = !permissions.allTrusted
     if let button = statusItem.button {
       button.image = NSImage(
-        systemSymbolName: paused ? "pause.circle" : "circle.fill",
-        accessibilityDescription: paused ? "agentd paused" : "agentd recording"
+        systemSymbolName: statusSymbol(paused: paused, needsPermission: needsPermission),
+        accessibilityDescription: accessibilityDescription(
+          paused: paused, needsPermission: needsPermission)
       )
       button.image?.isTemplate = true
-      button.toolTip = "agentd — \(detail)"
+      button.toolTip = needsPermission ? "agentd — permissions needed" : "agentd — \(detail)"
     }
     if let item = menu.items.first {
       item.title = paused ? "Resume Capture" : "Pause Capture"
     }
+    permissionItem?.title = "Permissions: \(permissions.menuSummary)"
+    screenRecordingItem?.isEnabled = !permissions.screenCaptureTrusted
+    accessibilityItem?.isEnabled = !permissions.accessibilityTrusted
     let mode = localOnly ? "local-only" : "managed"
     let policy = policyVersion.map { " policy \($0)" } ?? ""
     aboutItem?.title = "agentd \(Bundle.main.appVersion) — \(mode)\(policy)"
     launchAtLoginItem?.state = LaunchAtLoginController.isEnabled ? .on : .off
+  }
+
+  private func statusSymbol(paused: Bool, needsPermission: Bool) -> String {
+    if needsPermission { return "exclamationmark.triangle.fill" }
+    return paused ? "pause.circle" : "circle.fill"
+  }
+
+  private func accessibilityDescription(paused: Bool, needsPermission: Bool) -> String {
+    if needsPermission { return "agentd permissions needed" }
+    return paused ? "agentd paused" : "agentd recording"
   }
 }
 

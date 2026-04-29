@@ -95,8 +95,10 @@ local inspection of the shipped arm64 `codex_chronicle` helper bundled with
 - Browser capture has Chronicle-style metadata hardening: private/incognito and
   meeting browser windows are denied, and browser frames with missing focused
   window titles fail closed instead of being treated as normal allowed windows.
-- Menu-bar UI: pause/resume (`⌃⌥⌘P`), flush now (`⌃⌥⌘F`), reveal batches dir,
-  diagnostics report (`⌃⌥⌘D`), delete queued batches, launch-at-login, quit.
+- Menu-bar UI: permission status with direct Screen Recording and Accessibility
+  settings actions, pause/resume (`⌃⌥⌘P`), flush now (`⌃⌥⌘F`), reveal batches
+  dir, diagnostics report (`⌃⌥⌘D`), delete queued batches, launch-at-login,
+  quit.
 
 ## Build
 

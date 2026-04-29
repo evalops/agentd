@@ -6,6 +6,25 @@ import XCTest
 @testable import agentd
 
 final class DiagnosticsTests: XCTestCase {
+  func testPermissionSnapshotMenuSummary() {
+    XCTAssertEqual(
+      PermissionSnapshot(accessibilityTrusted: true, screenCaptureTrusted: true).menuSummary,
+      "Ready"
+    )
+    XCTAssertEqual(
+      PermissionSnapshot(accessibilityTrusted: true, screenCaptureTrusted: false).menuSummary,
+      "Needs Screen Recording"
+    )
+    XCTAssertEqual(
+      PermissionSnapshot(accessibilityTrusted: false, screenCaptureTrusted: true).menuSummary,
+      "Needs Accessibility"
+    )
+    XCTAssertEqual(
+      PermissionSnapshot(accessibilityTrusted: false, screenCaptureTrusted: false).menuSummary,
+      "Needs Screen Recording + Accessibility"
+    )
+  }
+
   func testDiagnosticsReportRedactsSecretsAndPathsButKeepsQueueSummary() {
     let cfg = AgentConfig(
       deviceId: "device_1",

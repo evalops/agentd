@@ -137,6 +137,16 @@ final class AppController {
       onDeleteQueuedBatches: { [weak self] in
         Task { @MainActor in await self?.deleteQueuedBatches() }
       },
+      onOpenScreenRecordingSettings: {
+        Task { @MainActor in
+          AppController.openSystemSettingsPane("Privacy_ScreenCapture")
+        }
+      },
+      onOpenAccessibilitySettings: {
+        Task { @MainActor in
+          AppController.openSystemSettingsPane("Privacy_Accessibility")
+        }
+      },
       onLaunchAtLoginToggle: { enabled in
         do {
           try LaunchAtLoginController.setEnabled(enabled)
@@ -645,15 +655,44 @@ final class AppController {
     menuBar?.setStatus(
       paused: pauseState.paused || !captureRunning,
       detail: detail,
+      permissions: PermissionSnapshot.current(promptForAccessibility: false),
       localOnly: config.localOnly,
       policyVersion: controlState.lastPolicyVersion
     )
+  }
+
+  private static func openSystemSettingsPane(_ pane: String) {
+    guard
+      let url = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")
+    else { return }
+    NSWorkspace.shared.open(url)
   }
 }
 
 struct PermissionSnapshot: Sendable, Equatable, Codable {
   let accessibilityTrusted: Bool
   let screenCaptureTrusted: Bool
+
+  var allTrusted: Bool {
+    accessibilityTrusted && screenCaptureTrusted
+  }
+
+  var menuSummary: String {
+    if allTrusted { return "Ready" }
+    return "Needs \(missingPermissionNames.joined(separator: " + "))"
+  }
+
+  private var missingPermissionNames: [String] {
+    var names: [String] = []
+    if !screenCaptureTrusted {
+      names.append("Screen Recording")
+    }
+    if !accessibilityTrusted {
+      names.append("Accessibility")
+    }
+    return names
+  }
 
   @MainActor
   static func current(promptForAccessibility: Bool) -> PermissionSnapshot {
