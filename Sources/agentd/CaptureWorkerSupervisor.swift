@@ -117,9 +117,8 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
 
     let pid = target.processIdentifier
     Log.capture.info("terminating capture worker safely with TERM pid=\(pid, privacy: .public)")
-    let termSent = Darwin.kill(pid, SIGTERM) == 0
-    let exitedAfterTerm =
-      termSent && Self.wait(for: target, timeoutSeconds: max(0, graceSeconds))
+    let termSent = target.isRunning && Darwin.kill(pid, SIGTERM) == 0
+    let exitedAfterTerm = Self.wait(for: target, timeoutSeconds: max(0, graceSeconds))
     if exitedAfterTerm {
       Log.capture.info("capture worker terminated safely with TERM pid=\(pid, privacy: .public)")
       return recordTermination(
