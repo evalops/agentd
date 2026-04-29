@@ -81,6 +81,12 @@ struct AgentConfig: Codable, Sendable {
   var adaptiveOcrBacklogBytes: Int64
   var ocrDiffSamplerEnabled: Bool
   var ocrDiffSimilarityThreshold: Double
+  var eventCaptureEnabled: Bool
+  var eventCapturePollSeconds: Double
+  var eventCaptureDebounceSeconds: Double
+  var eventCaptureMinGapSeconds: Double
+  var eventCaptureIdleFallbackSeconds: Double
+  var eventCaptureTimeoutSeconds: Double
   var sparseFrameStorageRoot: String?
   var sparseFrameRetentionHours: Double
   var sparseFrameIncludeOcrText: Bool
@@ -119,6 +125,12 @@ struct AgentConfig: Codable, Sendable {
     case adaptiveOcrBacklogBytes
     case ocrDiffSamplerEnabled
     case ocrDiffSimilarityThreshold
+    case eventCaptureEnabled
+    case eventCapturePollSeconds
+    case eventCaptureDebounceSeconds
+    case eventCaptureMinGapSeconds
+    case eventCaptureIdleFallbackSeconds
+    case eventCaptureTimeoutSeconds
     case sparseFrameStorageRoot
     case sparseFrameRetentionHours
     case sparseFrameIncludeOcrText
@@ -157,6 +169,12 @@ struct AgentConfig: Codable, Sendable {
     adaptiveOcrBacklogBytes: Int64 = 64 * 1024 * 1024,
     ocrDiffSamplerEnabled: Bool = false,
     ocrDiffSimilarityThreshold: Double = 0.92,
+    eventCaptureEnabled: Bool = false,
+    eventCapturePollSeconds: Double = 0.5,
+    eventCaptureDebounceSeconds: Double = 0.25,
+    eventCaptureMinGapSeconds: Double = 1,
+    eventCaptureIdleFallbackSeconds: Double = 30,
+    eventCaptureTimeoutSeconds: Double = 5,
     sparseFrameStorageRoot: String? = nil,
     sparseFrameRetentionHours: Double = 6,
     sparseFrameIncludeOcrText: Bool = false,
@@ -193,6 +211,12 @@ struct AgentConfig: Codable, Sendable {
     self.adaptiveOcrBacklogBytes = adaptiveOcrBacklogBytes
     self.ocrDiffSamplerEnabled = ocrDiffSamplerEnabled
     self.ocrDiffSimilarityThreshold = ocrDiffSimilarityThreshold
+    self.eventCaptureEnabled = eventCaptureEnabled
+    self.eventCapturePollSeconds = eventCapturePollSeconds
+    self.eventCaptureDebounceSeconds = eventCaptureDebounceSeconds
+    self.eventCaptureMinGapSeconds = eventCaptureMinGapSeconds
+    self.eventCaptureIdleFallbackSeconds = eventCaptureIdleFallbackSeconds
+    self.eventCaptureTimeoutSeconds = eventCaptureTimeoutSeconds
     self.sparseFrameStorageRoot = sparseFrameStorageRoot
     self.sparseFrameRetentionHours = sparseFrameRetentionHours
     self.sparseFrameIncludeOcrText = sparseFrameIncludeOcrText
@@ -311,6 +335,18 @@ struct AgentConfig: Codable, Sendable {
       try container.decodeIfPresent(Bool.self, forKey: .ocrDiffSamplerEnabled) ?? false
     ocrDiffSimilarityThreshold =
       try container.decodeIfPresent(Double.self, forKey: .ocrDiffSimilarityThreshold) ?? 0.92
+    eventCaptureEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .eventCaptureEnabled) ?? false
+    eventCapturePollSeconds =
+      try container.decodeIfPresent(Double.self, forKey: .eventCapturePollSeconds) ?? 0.5
+    eventCaptureDebounceSeconds =
+      try container.decodeIfPresent(Double.self, forKey: .eventCaptureDebounceSeconds) ?? 0.25
+    eventCaptureMinGapSeconds =
+      try container.decodeIfPresent(Double.self, forKey: .eventCaptureMinGapSeconds) ?? 1
+    eventCaptureIdleFallbackSeconds =
+      try container.decodeIfPresent(Double.self, forKey: .eventCaptureIdleFallbackSeconds) ?? 30
+    eventCaptureTimeoutSeconds =
+      try container.decodeIfPresent(Double.self, forKey: .eventCaptureTimeoutSeconds) ?? 5
     sparseFrameStorageRoot = try container.decodeIfPresent(
       String.self, forKey: .sparseFrameStorageRoot)
     sparseFrameRetentionHours =
@@ -360,6 +396,12 @@ struct AgentConfig: Codable, Sendable {
     try container.encode(adaptiveOcrBacklogBytes, forKey: .adaptiveOcrBacklogBytes)
     try container.encode(ocrDiffSamplerEnabled, forKey: .ocrDiffSamplerEnabled)
     try container.encode(ocrDiffSimilarityThreshold, forKey: .ocrDiffSimilarityThreshold)
+    try container.encode(eventCaptureEnabled, forKey: .eventCaptureEnabled)
+    try container.encode(eventCapturePollSeconds, forKey: .eventCapturePollSeconds)
+    try container.encode(eventCaptureDebounceSeconds, forKey: .eventCaptureDebounceSeconds)
+    try container.encode(eventCaptureMinGapSeconds, forKey: .eventCaptureMinGapSeconds)
+    try container.encode(eventCaptureIdleFallbackSeconds, forKey: .eventCaptureIdleFallbackSeconds)
+    try container.encode(eventCaptureTimeoutSeconds, forKey: .eventCaptureTimeoutSeconds)
     try container.encodeIfPresent(sparseFrameStorageRoot, forKey: .sparseFrameStorageRoot)
     try container.encode(sparseFrameRetentionHours, forKey: .sparseFrameRetentionHours)
     try container.encode(sparseFrameIncludeOcrText, forKey: .sparseFrameIncludeOcrText)
@@ -435,6 +477,12 @@ struct AgentConfig: Codable, Sendable {
       adaptiveOcrBacklogBytes: 64 * 1024 * 1024,
       ocrDiffSamplerEnabled: false,
       ocrDiffSimilarityThreshold: 0.92,
+      eventCaptureEnabled: false,
+      eventCapturePollSeconds: 0.5,
+      eventCaptureDebounceSeconds: 0.25,
+      eventCaptureMinGapSeconds: 1,
+      eventCaptureIdleFallbackSeconds: 30,
+      eventCaptureTimeoutSeconds: 5,
       sparseFrameStorageRoot: nil,
       sparseFrameRetentionHours: 6,
       sparseFrameIncludeOcrText: false,
