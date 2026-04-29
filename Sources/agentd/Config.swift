@@ -79,6 +79,8 @@ struct AgentConfig: Codable, Sendable {
   var adaptiveOcrMinChars: Int
   var adaptiveOcrBackpressureThreshold: Int
   var adaptiveOcrBacklogBytes: Int64
+  var ocrDiffSamplerEnabled: Bool
+  var ocrDiffSimilarityThreshold: Double
   var sparseFrameStorageRoot: String?
   var sparseFrameRetentionHours: Double
   var sparseFrameIncludeOcrText: Bool
@@ -115,6 +117,8 @@ struct AgentConfig: Codable, Sendable {
     case adaptiveOcrMinChars
     case adaptiveOcrBackpressureThreshold
     case adaptiveOcrBacklogBytes
+    case ocrDiffSamplerEnabled
+    case ocrDiffSimilarityThreshold
     case sparseFrameStorageRoot
     case sparseFrameRetentionHours
     case sparseFrameIncludeOcrText
@@ -151,6 +155,8 @@ struct AgentConfig: Codable, Sendable {
     adaptiveOcrMinChars: Int = 1024,
     adaptiveOcrBackpressureThreshold: Int = 8,
     adaptiveOcrBacklogBytes: Int64 = 64 * 1024 * 1024,
+    ocrDiffSamplerEnabled: Bool = false,
+    ocrDiffSimilarityThreshold: Double = 0.92,
     sparseFrameStorageRoot: String? = nil,
     sparseFrameRetentionHours: Double = 6,
     sparseFrameIncludeOcrText: Bool = false,
@@ -185,6 +191,8 @@ struct AgentConfig: Codable, Sendable {
     self.adaptiveOcrMinChars = adaptiveOcrMinChars
     self.adaptiveOcrBackpressureThreshold = adaptiveOcrBackpressureThreshold
     self.adaptiveOcrBacklogBytes = adaptiveOcrBacklogBytes
+    self.ocrDiffSamplerEnabled = ocrDiffSamplerEnabled
+    self.ocrDiffSimilarityThreshold = ocrDiffSimilarityThreshold
     self.sparseFrameStorageRoot = sparseFrameStorageRoot
     self.sparseFrameRetentionHours = sparseFrameRetentionHours
     self.sparseFrameIncludeOcrText = sparseFrameIncludeOcrText
@@ -299,6 +307,10 @@ struct AgentConfig: Codable, Sendable {
     adaptiveOcrBacklogBytes =
       try container.decodeIfPresent(Int64.self, forKey: .adaptiveOcrBacklogBytes)
       ?? 64 * 1024 * 1024
+    ocrDiffSamplerEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .ocrDiffSamplerEnabled) ?? false
+    ocrDiffSimilarityThreshold =
+      try container.decodeIfPresent(Double.self, forKey: .ocrDiffSimilarityThreshold) ?? 0.92
     sparseFrameStorageRoot = try container.decodeIfPresent(
       String.self, forKey: .sparseFrameStorageRoot)
     sparseFrameRetentionHours =
@@ -346,6 +358,8 @@ struct AgentConfig: Codable, Sendable {
     try container.encode(
       adaptiveOcrBackpressureThreshold, forKey: .adaptiveOcrBackpressureThreshold)
     try container.encode(adaptiveOcrBacklogBytes, forKey: .adaptiveOcrBacklogBytes)
+    try container.encode(ocrDiffSamplerEnabled, forKey: .ocrDiffSamplerEnabled)
+    try container.encode(ocrDiffSimilarityThreshold, forKey: .ocrDiffSimilarityThreshold)
     try container.encodeIfPresent(sparseFrameStorageRoot, forKey: .sparseFrameStorageRoot)
     try container.encode(sparseFrameRetentionHours, forKey: .sparseFrameRetentionHours)
     try container.encode(sparseFrameIncludeOcrText, forKey: .sparseFrameIncludeOcrText)
@@ -419,6 +433,8 @@ struct AgentConfig: Codable, Sendable {
       adaptiveOcrMinChars: 1024,
       adaptiveOcrBackpressureThreshold: 8,
       adaptiveOcrBacklogBytes: 64 * 1024 * 1024,
+      ocrDiffSamplerEnabled: false,
+      ocrDiffSimilarityThreshold: 0.92,
       sparseFrameStorageRoot: nil,
       sparseFrameRetentionHours: 6,
       sparseFrameIncludeOcrText: false,
