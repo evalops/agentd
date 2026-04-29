@@ -22,6 +22,7 @@ final class MenuBarController: NSObject {
   private let onOpenDiagnostics: @Sendable () -> Void
   private let onDeleteQueuedBatches: @Sendable () -> Void
   private let onRefreshPermissions: @Sendable () -> Void
+  private let onOpenPermissionSetup: @Sendable () -> Void
   private let onOpenScreenRecordingSettings: @Sendable () -> Void
   private let onOpenAccessibilitySettings: @Sendable () -> Void
   private let onRelaunch: @Sendable () -> Void
@@ -35,6 +36,7 @@ final class MenuBarController: NSObject {
     onOpenDiagnostics: @escaping @Sendable () -> Void,
     onDeleteQueuedBatches: @escaping @Sendable () -> Void,
     onRefreshPermissions: @escaping @Sendable () -> Void,
+    onOpenPermissionSetup: @escaping @Sendable () -> Void,
     onOpenScreenRecordingSettings: @escaping @Sendable () -> Void,
     onOpenAccessibilitySettings: @escaping @Sendable () -> Void,
     onRelaunch: @escaping @Sendable () -> Void,
@@ -47,6 +49,7 @@ final class MenuBarController: NSObject {
     self.onOpenDiagnostics = onOpenDiagnostics
     self.onDeleteQueuedBatches = onDeleteQueuedBatches
     self.onRefreshPermissions = onRefreshPermissions
+    self.onOpenPermissionSetup = onOpenPermissionSetup
     self.onOpenScreenRecordingSettings = onOpenScreenRecordingSettings
     self.onOpenAccessibilitySettings = onOpenAccessibilitySettings
     self.onRelaunch = onRelaunch
@@ -116,6 +119,11 @@ final class MenuBarController: NSObject {
     refreshPermissionsItem.target = self
     menu.addItem(refreshPermissionsItem)
 
+    let permissionSetupItem = NSMenuItem(
+      title: "Open Permission Setup", action: #selector(openPermissionSetup), keyEquivalent: "")
+    permissionSetupItem.target = self
+    menu.addItem(permissionSetupItem)
+
     let screenRecordingItem = NSMenuItem(
       title: "Open Screen & System Audio Recording Settings",
       action: #selector(openScreenRecordingSettings),
@@ -176,6 +184,7 @@ final class MenuBarController: NSObject {
   @objc private func openDiagnostics() { onOpenDiagnostics() }
   @objc private func deleteQueuedBatches() { onDeleteQueuedBatches() }
   @objc private func refreshPermissions() { onRefreshPermissions() }
+  @objc private func openPermissionSetup() { onOpenPermissionSetup() }
   @objc private func openScreenRecordingSettings() { onOpenScreenRecordingSettings() }
   @objc private func openAccessibilitySettings() { onOpenAccessibilitySettings() }
   @objc private func relaunch() { onRelaunch() }

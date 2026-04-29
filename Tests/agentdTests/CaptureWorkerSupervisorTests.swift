@@ -12,7 +12,10 @@ final class CaptureWorkerSupervisorTests: XCTestCase {
     let pid = try supervisor.start(
       CaptureWorkerProcessSpec(
         executableURL: URL(fileURLWithPath: "/usr/bin/perl"),
-        arguments: ["-e", "$|=1; print \"ready\\n\"; sleep 30"],
+        arguments: [
+          "-e",
+          "$|=1; $SIG{TERM}=sub{exit 0}; print \"ready\\n\"; while (1) { select undef, undef, undef, 0.1 }",
+        ],
         standardOutput: output
       )
     )
@@ -35,7 +38,10 @@ final class CaptureWorkerSupervisorTests: XCTestCase {
     let pid = try supervisor.start(
       CaptureWorkerProcessSpec(
         executableURL: URL(fileURLWithPath: "/usr/bin/perl"),
-        arguments: ["-e", "$|=1; $SIG{TERM}=sub{}; print \"ready\\n\"; sleep 30"],
+        arguments: [
+          "-e",
+          "$|=1; $SIG{TERM}=sub{}; print \"ready\\n\"; while (1) { select undef, undef, undef, 0.1 }",
+        ],
         standardOutput: output
       )
     )
