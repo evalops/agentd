@@ -11,6 +11,7 @@ final class DiagnosticCLITests: XCTestCase {
     XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "list-displays"]))
     XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "capture-once"]))
     XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "capture-worker-once"]))
+    XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "capture-worker-stream"]))
     XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "selftest"]))
     XCTAssertFalse(DiagnosticCLI.shouldHandle(["agentd", "--local-only"]))
   }
@@ -47,6 +48,28 @@ final class DiagnosticCLITests: XCTestCase {
     }
     XCTAssertEqual(options.displayId, 7)
     XCTAssertTrue(options.noOCR)
+  }
+
+  func testCaptureWorkerStreamParserRequiresDisplayAndAcceptsFps() throws {
+    let command = try DiagnosticCommand.parse([
+      "capture-worker-stream", "--display-id", "7", "--fps", "0.5",
+    ])
+
+    guard case .captureWorkerStream(let options) = command else {
+      return XCTFail("expected capture-worker-stream")
+    }
+    XCTAssertEqual(options.displayId, 7)
+    XCTAssertEqual(options.fps, 0.5)
+  }
+
+  func testCaptureWorkerStreamParserRequiresDisplayId() {
+    XCTAssertThrowsError(try DiagnosticCommand.parse(["capture-worker-stream", "--fps", "1"])) {
+      error in
+      guard let cliError = error as? DiagnosticCLIError else {
+        return XCTFail("unexpected error: \(error)")
+      }
+      XCTAssertTrue(cliError.localizedDescription.contains("requires --display-id"))
+    }
   }
 
   func testCaptureOnceParserRejectsUnknownFlags() {

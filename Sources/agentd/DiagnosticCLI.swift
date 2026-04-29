@@ -108,7 +108,8 @@ enum DiagnosticProbeRunner {
 
 enum DiagnosticCLI {
   static let handledCommands = [
-    "list-displays", "capture-once", "capture-worker-once", "selftest", "help", "--help", "-h",
+    "list-displays", "capture-once", "capture-worker-once", "capture-worker-stream", "selftest",
+    "help", "--help", "-h",
   ]
 
   static func shouldHandle(_ arguments: [String]) -> Bool {
@@ -139,6 +140,8 @@ enum DiagnosticCLI {
       case .captureWorkerOnce(let options):
         let payload = try await CaptureWorkerDiagnostics.run(options: options)
         try writeJSON(payload, to: options.out)
+      case .captureWorkerStream(let options):
+        try await CaptureWorkerDiagnostics.runStream(options: options)
       }
       return 0
     } catch let error as DiagnosticCLIError {
@@ -185,6 +188,7 @@ enum DiagnosticCommand: Equatable {
   case listDisplays
   case captureOnce(CaptureOnceOptions)
   case captureWorkerOnce(CaptureOnceOptions)
+  case captureWorkerStream(CaptureStreamOptions)
   case selftest
 
   static func parse(_ arguments: [String]) throws -> DiagnosticCommand {
@@ -200,6 +204,8 @@ enum DiagnosticCommand: Equatable {
       return .captureOnce(try CaptureOnceOptions.parse(tail))
     case "capture-worker-once":
       return .captureWorkerOnce(try CaptureOnceOptions.parse(tail))
+    case "capture-worker-stream":
+      return .captureWorkerStream(try CaptureStreamOptions.parse(tail))
     case "selftest":
       guard tail.isEmpty else { throw DiagnosticCLIError.usage("selftest takes no flags") }
       return .selftest
@@ -245,6 +251,43 @@ struct CaptureOnceOptions: Equatable {
       index += 1
     }
     return options
+  }
+}
+
+struct CaptureStreamOptions: Equatable {
+  let displayId: UInt32
+  let fps: Double
+
+  static func parse(_ arguments: [String]) throws -> CaptureStreamOptions {
+    var displayId: UInt32?
+    var fps = 1.0
+    var index = 0
+    while index < arguments.count {
+      let flag = arguments[index]
+      switch flag {
+      case "--display-id":
+        index += 1
+        guard index < arguments.count, let value = UInt32(arguments[index]) else {
+          throw DiagnosticCLIError.usage("--display-id requires a UInt32 display id")
+        }
+        displayId = value
+      case "--fps":
+        index += 1
+        guard index < arguments.count, let value = Double(arguments[index]), value > 0 else {
+          throw DiagnosticCLIError.usage("--fps requires a positive number")
+        }
+        fps = value
+      case "--help", "-h":
+        throw DiagnosticCLIError.usage("")
+      default:
+        throw DiagnosticCLIError.usage("unknown capture-worker-stream flag '\(flag)'")
+      }
+      index += 1
+    }
+    guard let displayId else {
+      throw DiagnosticCLIError.usage("capture-worker-stream requires --display-id")
+    }
+    return CaptureStreamOptions(displayId: displayId, fps: fps)
   }
 }
 
@@ -482,7 +525,7 @@ enum CaptureOnceDiagnostics {
       }
     }
     do {
-      return try await CaptureService.captureOneFrame(
+      return try await ScreenCaptureService.captureOneFrame(
         targetFps: 2,
         captureAllDisplays: false,
         selectedDisplayIds: displayId.map { [$0] } ?? [],
@@ -506,6 +549,43 @@ enum CaptureWorkerDiagnostics {
       timeoutSeconds: 6
     )
     return try CaptureWorkerFrameCodec.payload(for: frame)
+  }
+
+  static func runStream(options: CaptureStreamOptions) async throws {
+    let available = try await DisplayDiagnostics.availableDisplayIds()
+    guard available.contains(options.displayId) else {
+      throw DiagnosticCLIError.usage(
+        "display id \(options.displayId) is not available; run agentd list-displays")
+    }
+    let writer = CaptureWorkerFrameWriter()
+    let service = ScreenCaptureService { frame in
+      do {
+        let payload = try CaptureWorkerFrameCodec.payload(for: frame)
+        let data = try CaptureWorkerFrameCodec.encodePayload(payload)
+        await writer.write(data)
+      } catch {
+        FileHandle.standardError.writeString(
+          "agentd: capture worker stream encode failed: \(error.localizedDescription)\n")
+      }
+    } onFrameDropped: { displayId in
+      FileHandle.standardError.writeString(
+        "agentd: capture worker stream dropped frame display=\(displayId)\n")
+    }
+    try await service.start(
+      targetFps: options.fps,
+      captureAllDisplays: false,
+      selectedDisplayIds: [options.displayId]
+    )
+    while !Task.isCancelled {
+      try await Task.sleep(nanoseconds: 60_000_000_000)
+    }
+    await service.stop()
+  }
+}
+
+actor CaptureWorkerFrameWriter {
+  func write(_ data: Data) {
+    FileHandle.standardOutput.write(data)
   }
 }
 
