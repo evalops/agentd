@@ -10,7 +10,6 @@ final class MenuBarController: NSObject {
   private var captureStateItem: NSMenuItem?
   private var pauseItem: NSMenuItem?
   private var permissionItem: NSMenuItem?
-  private var permissionSetupItem: NSMenuItem?
   private var screenRecordingItem: NSMenuItem?
   private var accessibilityItem: NSMenuItem?
   private var aboutItem: NSMenuItem?
@@ -123,7 +122,6 @@ final class MenuBarController: NSObject {
     let permissionSetupItem = NSMenuItem(
       title: "Open Permission Setup", action: #selector(openPermissionSetup), keyEquivalent: "")
     permissionSetupItem.target = self
-    self.permissionSetupItem = permissionSetupItem
     menu.addItem(permissionSetupItem)
 
     let screenRecordingItem = NSMenuItem(
