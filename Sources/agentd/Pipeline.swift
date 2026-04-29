@@ -347,11 +347,160 @@ struct OcrDiffSampler: Sendable {
   }
 }
 
+enum PrivacyDropKind: Sendable, Equatable {
+  case deniedApp
+  case deniedPath
+}
+
+struct PrivacyDecision: Sendable, Equatable {
+  let allowed: Bool
+  let reasonCode: String
+  let dropKind: PrivacyDropKind?
+  let observationId: String
+  let cached: Bool
+}
+
+struct PrivacyDecisionCache: Sendable {
+  private var entries: [PrivacyObservationSignature: PrivacyDecisionCacheEntry] = [:]
+  private var policyGeneration = 0
+
+  mutating func invalidateForPolicyUpdate() {
+    entries.removeAll(keepingCapacity: true)
+    policyGeneration += 1
+  }
+
+  mutating func decision(
+    for context: WindowContext,
+    config: AgentConfig,
+    now: Date = Date()
+  ) -> PrivacyDecision {
+    let signature = PrivacyObservationSignature(context: context, config: config)
+    if var entry = entries[signature] {
+      entry.lastEvaluatedAt = now
+      entries[signature] = entry
+      return PrivacyDecision(
+        allowed: entry.allowed,
+        reasonCode: entry.reasonCode,
+        dropKind: entry.dropKind,
+        observationId: entry.observationId,
+        cached: true
+      )
+    }
+
+    let evaluated = Self.evaluate(signature: signature, context: context, config: config)
+    let observationId = Self.observationId(signature: signature, policyGeneration: policyGeneration)
+    entries[signature] = PrivacyDecisionCacheEntry(
+      allowed: evaluated.allowed,
+      reasonCode: evaluated.reasonCode,
+      dropKind: evaluated.dropKind,
+      observationId: observationId,
+      observedAt: now,
+      lastEvaluatedAt: now
+    )
+    return PrivacyDecision(
+      allowed: evaluated.allowed,
+      reasonCode: evaluated.reasonCode,
+      dropKind: evaluated.dropKind,
+      observationId: observationId,
+      cached: false
+    )
+  }
+
+  private static func evaluate(
+    signature: PrivacyObservationSignature,
+    context: WindowContext,
+    config: AgentConfig
+  ) -> (allowed: Bool, reasonCode: String, dropKind: PrivacyDropKind?) {
+    if config.deniedBundleIds.contains(context.bundleId) {
+      return (false, "denied_bundle", .deniedApp)
+    }
+    if !config.allowedBundleIds.isEmpty,
+      !config.allowedBundleIds.contains(context.bundleId)
+    {
+      return (false, "allowlist_miss", .deniedApp)
+    }
+    if signature.pathClass.hasPrefix("denied:") {
+      return (false, "denied_path", .deniedPath)
+    }
+    if signature.titleClass.hasPrefix("pause:") {
+      return (false, "pause_title_pattern", .deniedApp)
+    }
+    return (true, "allowed", nil)
+  }
+
+  private static func observationId(
+    signature: PrivacyObservationSignature,
+    policyGeneration: Int
+  ) -> String {
+    let raw = [
+      String(policyGeneration),
+      signature.bundleId,
+      String(signature.pid),
+      signature.titleClass,
+      signature.pathClass,
+    ].joined(separator: "|")
+    let digest = SHA256.hash(data: Data(raw.utf8))
+    return digest.prefix(12).map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+struct PrivacyObservationSignature: Sendable, Hashable {
+  let bundleId: String
+  let pid: pid_t
+  let titleClass: String
+  let pathClass: String
+
+  init(context: WindowContext, config: AgentConfig) {
+    self.bundleId = context.bundleId
+    self.pid = context.pid
+    self.titleClass = Self.titleClass(
+      context.windowTitle, pausePatterns: config.pauseWindowTitlePatterns)
+    self.pathClass = Self.pathClass(
+      context.documentPath, deniedPrefixes: config.deniedPathPrefixes)
+  }
+
+  static func titleClass(_ title: String, pausePatterns: [String]) -> String {
+    guard !title.isEmpty else { return "missing" }
+    if let match = pausePatterns.first(where: { title.contains($0) }) {
+      return "pause:\(stableClassHash(match))"
+    }
+    return "normal"
+  }
+
+  static func pathClass(_ path: String?, deniedPrefixes: [String]) -> String {
+    guard let path, !path.isEmpty else { return "none" }
+    let policy = PathPolicy(deniedPrefixes: deniedPrefixes)
+    if policy.deny(path) {
+      let matched = deniedPrefixes.first { prefix in
+        let expanded = NSString(string: prefix).expandingTildeInPath
+        return path.hasPrefix(expanded) || path.hasPrefix(prefix)
+      }
+      return "denied:\(stableClassHash(matched ?? "path"))"
+    }
+    return "present"
+  }
+
+  private static func stableClassHash(_ value: String) -> String {
+    let digest = SHA256.hash(data: Data(value.utf8))
+    return digest.prefix(6).map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+private struct PrivacyDecisionCacheEntry: Sendable {
+  let allowed: Bool
+  let reasonCode: String
+  let dropKind: PrivacyDropKind?
+  let observationId: String
+  let observedAt: Date
+  var lastEvaluatedAt: Date
+}
+
 actor FramePipeline {
   private var config: AgentConfig
   private let ocr: any OCRRecognizing
   private var dedupWindow = DedupWindow(capacity: 16, threshold: 5)
   private var lastEmittedOcrText: String?
+  private var privacyDecisionCache = PrivacyDecisionCache()
   private var sparseFrameStore: SparseFrameStore?
   private var sparseFrameStoreOptions: SparseFrameStoreOptions?
 
@@ -380,6 +529,7 @@ actor FramePipeline {
 
   func updateConfig(_ cfg: AgentConfig) {
     self.config = cfg
+    privacyDecisionCache.invalidateForPolicyUpdate()
     let options = Self.sparseFrameStoreOptions(cfg)
     guard options != sparseFrameStoreOptions else { return }
     sparseFrameStoreOptions = options
@@ -398,27 +548,19 @@ actor FramePipeline {
   func consume(_ frame: CapturedFrame, context: WindowContext?) async {
     guard let ctx = context else { return }
 
-    if config.deniedBundleIds.contains(ctx.bundleId) {
-      droppedDeniedApp += 1
-      Log.scrub.debug("denied bundle \(ctx.bundleId, privacy: .public)")
-      return
+    let privacyDecision = privacyDecisionCache.decision(for: ctx, config: config)
+    if !privacyDecision.cached {
+      Log.scrub.info(
+        "privacy_decision observation=\(privacyDecision.observationId, privacy: .public) decision=\(privacyDecision.allowed ? "allow" : "deny", privacy: .public) reason=\(privacyDecision.reasonCode, privacy: .public)"
+      )
     }
-    if !config.allowedBundleIds.isEmpty,
-      !config.allowedBundleIds.contains(ctx.bundleId)
-    {
-      droppedDeniedApp += 1
-      Log.scrub.info("allowlist miss bundle=\(ctx.bundleId, privacy: .public)")
-      return
-    }
-
-    let pathPolicy = PathPolicy(deniedPrefixes: config.deniedPathPrefixes)
-    if let p = ctx.documentPath, pathPolicy.deny(p) {
-      droppedDeniedPath += 1
-      Log.scrub.info("denied path bundle=\(ctx.bundleId, privacy: .public)")
-      return
-    }
-    if config.pauseWindowTitlePatterns.contains(where: { ctx.windowTitle.contains($0) }) {
-      droppedDeniedApp += 1
+    guard privacyDecision.allowed else {
+      switch privacyDecision.dropKind {
+      case .deniedPath:
+        droppedDeniedPath += 1
+      case .deniedApp, nil:
+        droppedDeniedApp += 1
+      }
       return
     }
 
