@@ -457,6 +457,70 @@ final class PipelineTests: XCTestCase {
     )
   }
 
+  func testPrivacyDecisionCacheReusesStableNormalWindowClass() {
+    var cache = PrivacyDecisionCache()
+    let cfg = Self.config()
+
+    let first = cache.decision(
+      for: Self.context(windowTitle: "Editor - file one", documentPath: "/tmp/a.swift"),
+      config: cfg,
+      now: Date(timeIntervalSince1970: 1)
+    )
+    let second = cache.decision(
+      for: Self.context(windowTitle: "Editor - file two", documentPath: "/tmp/b.swift"),
+      config: cfg,
+      now: Date(timeIntervalSince1970: 2)
+    )
+
+    XCTAssertTrue(first.allowed)
+    XCTAssertFalse(first.cached)
+    XCTAssertTrue(second.allowed)
+    XCTAssertTrue(second.cached)
+    XCTAssertEqual(first.observationId, second.observationId)
+  }
+
+  func testPrivacyDecisionCacheInvalidatesWhenTitleClassChanges() {
+    var cache = PrivacyDecisionCache()
+    let cfg = Self.config()
+
+    let normal = cache.decision(for: Self.context(windowTitle: "Editor"), config: cfg)
+    let privateWindow = cache.decision(
+      for: Self.context(windowTitle: "Private Browsing - Example"), config: cfg)
+
+    XCTAssertTrue(normal.allowed)
+    XCTAssertFalse(privateWindow.allowed)
+    XCTAssertFalse(privateWindow.cached)
+    XCTAssertEqual(privateWindow.reasonCode, "pause_title_pattern")
+    XCTAssertEqual(privateWindow.dropKind, .deniedApp)
+    XCTAssertNotEqual(normal.observationId, privateWindow.observationId)
+  }
+
+  func testPrivacyDecisionCachePolicyInvalidationChangesObservationId() {
+    var cache = PrivacyDecisionCache()
+    let cfg = Self.config()
+
+    let before = cache.decision(for: Self.context(), config: cfg)
+    cache.invalidateForPolicyUpdate()
+    let after = cache.decision(for: Self.context(), config: cfg)
+
+    XCTAssertFalse(before.cached)
+    XCTAssertFalse(after.cached)
+    XCTAssertNotEqual(before.observationId, after.observationId)
+  }
+
+  func testPrivacyDecisionCacheDeniedPathStaysPathDrop() {
+    var cache = PrivacyDecisionCache()
+    let cfg = Self.config()
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+
+    let decision = cache.decision(
+      for: Self.context(documentPath: "\(home)/.ssh/id_ed25519"), config: cfg)
+
+    XCTAssertFalse(decision.allowed)
+    XCTAssertEqual(decision.reasonCode, "denied_path")
+    XCTAssertEqual(decision.dropKind, .deniedPath)
+  }
+
   static func config(maxFramesPerBatch: Int = 24, maxOcrTextChars: Int = 4096) -> AgentConfig {
     AgentConfig(
       deviceId: "device_1",
