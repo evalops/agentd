@@ -13,6 +13,7 @@ final class MenuBarController: NSObject {
   private var aboutItem: NSMenuItem?
   private var launchAtLoginItem: NSMenuItem?
   private var paused: Bool = false
+  private var needsPermission: Bool = false
   private let onPauseToggle: @Sendable (Bool) -> Void
   private let onFlushNow: @Sendable () -> Void
   private let onOpenBatchesDir: @Sendable () -> Void
@@ -139,14 +140,7 @@ final class MenuBarController: NSObject {
 
   @objc private func togglePause() {
     paused.toggle()
-    if let button = statusItem.button {
-      button.image = NSImage(
-        systemSymbolName: paused ? "pause.circle" : "circle.fill",
-        accessibilityDescription: paused ? "agentd paused" : "agentd recording"
-      )
-      button.image?.isTemplate = true
-      button.toolTip = paused ? "agentd — paused" : "agentd — capturing"
-    }
+    updateStatusButton(detail: paused ? "paused" : "capturing")
     if let item = menu.items.first {
       item.title = paused ? "Resume Capture" : "Pause Capture"
     }
@@ -174,16 +168,8 @@ final class MenuBarController: NSObject {
     policyVersion: String?
   ) {
     self.paused = paused
-    let needsPermission = !permissions.allTrusted
-    if let button = statusItem.button {
-      button.image = NSImage(
-        systemSymbolName: statusSymbol(paused: paused, needsPermission: needsPermission),
-        accessibilityDescription: accessibilityDescription(
-          paused: paused, needsPermission: needsPermission)
-      )
-      button.image?.isTemplate = true
-      button.toolTip = needsPermission ? "agentd — permissions needed" : "agentd — \(detail)"
-    }
+    needsPermission = !permissions.allTrusted
+    updateStatusButton(detail: detail)
     if let item = menu.items.first {
       item.title = paused ? "Resume Capture" : "Pause Capture"
     }
@@ -204,6 +190,18 @@ final class MenuBarController: NSObject {
   private func accessibilityDescription(paused: Bool, needsPermission: Bool) -> String {
     if needsPermission { return "agentd permissions needed" }
     return paused ? "agentd paused" : "agentd recording"
+  }
+
+  private func updateStatusButton(detail: String) {
+    if let button = statusItem.button {
+      button.image = NSImage(
+        systemSymbolName: statusSymbol(paused: paused, needsPermission: needsPermission),
+        accessibilityDescription: accessibilityDescription(
+          paused: paused, needsPermission: needsPermission)
+      )
+      button.image?.isTemplate = true
+      button.toolTip = needsPermission ? "agentd — permissions needed" : "agentd — \(detail)"
+    }
   }
 }
 
