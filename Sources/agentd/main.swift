@@ -25,11 +25,13 @@ final class AppController {
   private var captureRetryTimer: Timer?
   private var foregroundPrivacyTimer: Timer?
   private var eventCaptureTimer: Timer?
+  private var captureHealthTimer: Timer?
   private var eventMonitors: [Any] = []
   private var typingPauseTimer: Timer?
   private var scrollStopTimer: Timer?
   private var foregroundPrivacyPauseReason: String?
   private var eventCaptureScheduler: EventCaptureScheduler
+  private var captureHealthWatchdog = CaptureHealthWatchdog()
   private var eventCaptureInFlight = false
   private var idleMode = false
 
@@ -165,6 +167,10 @@ final class AppController {
       Task { @MainActor in await self?.pollIdleState() }
     }
     scheduleEventCaptureInfrastructure()
+    captureHealthTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) {
+      [weak self] _ in
+      Task { @MainActor in await self?.pollCaptureHealth() }
+    }
     if controlClient != nil {
       heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
         Task { @MainActor in await self?.sendHeartbeat() }
@@ -356,11 +362,13 @@ final class AppController {
       } else {
         await capture.stop()
       }
+      captureHealthWatchdog.observeCaptureStopped()
       captureRunning = false
       idleMode = false
     } else if !shouldPause, !captureRunning {
       if config.eventCaptureEnabled {
         captureRunning = true
+        captureHealthWatchdog.observeCaptureStopped()
         scheduleEventCaptureInfrastructure()
         schedulePauseWindowTimer()
         updateMenuStatus()
@@ -373,6 +381,7 @@ final class AppController {
           selectedDisplayIds: config.selectedDisplayIds
         )
         captureRunning = true
+        captureHealthWatchdog.observeCaptureStarted()
         captureRetryTimer?.invalidate()
         captureRetryTimer = nil
       } catch {
@@ -383,6 +392,28 @@ final class AppController {
     }
     schedulePauseWindowTimer()
     updateMenuStatus()
+  }
+
+  private func pollCaptureHealth() async {
+    let displayStats = await capture.displayStats()
+    let staleAfter = max(30, config.batchIntervalSeconds * 2)
+    guard
+      let decision = captureHealthWatchdog.evaluate(
+        captureRunning: captureRunning,
+        eventCaptureEnabled: config.eventCaptureEnabled,
+        displayStats: displayStats,
+        staleAfterSeconds: staleAfter
+      )
+    else { return }
+
+    captureHealthWatchdog.recordRestart(decision)
+    Log.capture.error(
+      "capture health restart display=\(decision.displayId.map(String.init) ?? "none", privacy: .public) reason=\(decision.reason, privacy: .public)"
+    )
+    await capture.stop()
+    captureRunning = false
+    idleMode = false
+    await reconcileCaptureState()
   }
 
   private func scheduleCaptureRetry() {
@@ -435,6 +466,7 @@ final class AppController {
     let localBatches = await submitter.localBatchSummaries()
     let lastSubmitResult = await submitter.lastSubmitResult()
     let captureDisplayStats = await capture.displayStats()
+    let captureHealthStats = captureHealthWatchdog.stats()
     let snapshot = DiagnosticsSnapshot(
       generatedAt: Date(),
       appVersion: Bundle.main.appVersion,
@@ -451,6 +483,7 @@ final class AppController {
       localBatchStats: localStats,
       localBatches: localBatches,
       captureDisplayStats: captureDisplayStats,
+      captureHealthStats: captureHealthStats,
       lastSubmitResult: lastSubmitResult
     )
     do {
