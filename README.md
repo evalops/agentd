@@ -17,7 +17,7 @@ This is the desktop component of the work tracked in
 | Evidence model | LLM-summarized markdown memories under `$CODEX_HOME/memories_extensions/chronicle/` plus temporary sparse frames | Frame batches with OCR, window/path metadata, pHash dedupe, drop counts, and optional sparse local frame artifacts |
 | Privacy filter | Window-identity filters for browser private/incognito and meeting surfaces | Window identity, app/path policy, pause windows, and content scrub for AWS/GCP/SSH/JWT/GitHub/Anthropic/OpenAI/Slack/Stripe-style secrets |
 | Encryption at rest | Temporary JPEG/OCR sidecars and plaintext markdown memories on local disk | `.agentdbatch` AES-GCM by default in remote or Secret Broker mode, Keychain-managed keys, and local-only opt-in encryption |
-| Crash isolation | ScreenCaptureKit capture work runs through child-process paths with termination handling | In-process ScreenCaptureKit today; out-of-process capture supervisor tracked in [#53](https://github.com/evalops/agentd/issues/53) |
+| Crash isolation | ScreenCaptureKit capture work runs through child-process paths with termination handling | Continuous and one-shot ScreenCaptureKit capture run through supervised same-binary worker subprocesses with TERM -> KILL shutdown |
 | Prompt-injection exposure | Observed screen content is summarized by an LLM with prompt-level untrusted-input framing | Observed content is not fed to an on-device LLM by default; any future summarizer belongs in the controlled server pipeline |
 | Distribution | Notarized `Codex.app` bundle | Notarized `EvalOps agentd.app` release workflow and permission-smoke evidence |
 
@@ -107,6 +107,7 @@ swift run agentd -- list-displays
 swift run agentd -- capture-once --no-ocr
 swift test
 python3 scripts/mock_chronicle.py --self-test Tests/Fixtures/chronicle
+python3 scripts/chronicle_parity_audit.py # compare installed Codex Chronicle helper
 scripts/package_app.sh # release .app bundle with hardened runtime signing
 scripts/permission_smoke.sh --no-launch # generate permission-smoke evidence template
 ./script/build_and_run.sh --verify # package, launch, and verify the menu app process

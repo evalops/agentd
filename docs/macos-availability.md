@@ -4,8 +4,8 @@ agentd's supported deployment floor is macOS 14.0. The Swift package declares
 `.macOS(.v14)` in `Package.swift`, and the packaged app declares
 `LSMinimumSystemVersion` as `14.0` in `support/Info.plist`.
 
-This audit covers the macOS framework APIs that gate capture, OCR, permissions,
-window context, and launch-at-login.
+This audit covers the macOS framework APIs that gate ScreenCaptureKit capture,
+OCR, permissions, window context, and launch-at-login.
 
 | API | Call site | SDK availability | agentd posture |
 | --- | --- | --- | --- |
