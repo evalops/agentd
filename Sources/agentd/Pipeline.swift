@@ -19,6 +19,7 @@ struct ProcessedFrame: Sendable, Codable {
   let ocrText: String
   let ocrTextTruncated: Bool
   let ocrConfidence: Float
+  let ocrTextRegions: [OCRTextRegion]
   let widthPx: Int
   let heightPx: Int
   let bytesPng: Int
@@ -56,6 +57,7 @@ struct ProcessedFrame: Sendable, Codable {
     ocrText: String,
     ocrTextTruncated: Bool = false,
     ocrConfidence: Float,
+    ocrTextRegions: [OCRTextRegion] = [],
     widthPx: Int,
     heightPx: Int,
     bytesPng: Int,
@@ -73,6 +75,7 @@ struct ProcessedFrame: Sendable, Codable {
     self.ocrText = ocrText
     self.ocrTextTruncated = ocrTextTruncated
     self.ocrConfidence = ocrConfidence
+    self.ocrTextRegions = ocrTextRegions
     self.widthPx = widthPx
     self.heightPx = heightPx
     self.bytesPng = bytesPng
@@ -98,6 +101,7 @@ struct ProcessedFrame: Sendable, Codable {
     ocrText = try container.decode(String.self, forKey: .ocrText)
     ocrTextTruncated = try container.decodeIfPresent(Bool.self, forKey: .ocrTextTruncated) ?? false
     ocrConfidence = try container.decode(Float.self, forKey: .ocrConfidence)
+    ocrTextRegions = []
     widthPx = try container.decode(Int.self, forKey: .widthPx)
     heightPx = try container.decode(Int.self, forKey: .heightPx)
     if let value = try? container.decode(Int.self, forKey: .bytesPng) {
@@ -754,6 +758,7 @@ actor FramePipeline {
       ocrText: ocrText.value,
       ocrTextTruncated: ocrText.truncated,
       ocrConfidence: ocrResult.confidence,
+      ocrTextRegions: ocrResult.regions,
       widthPx: frame.cgImage.width,
       heightPx: frame.cgImage.height,
       bytesPng: estimatedBytes,
@@ -860,7 +865,8 @@ actor FramePipeline {
     return SparseFrameStoreOptions(
       root: root,
       retentionHours: config.sparseFrameRetentionHours,
-      includeOcrText: config.sparseFrameIncludeOcrText
+      includeOcrText: config.sparseFrameIncludeOcrText,
+      visualRedactionEnabled: config.sparseFrameVisualRedactionEnabled
     )
   }
 
@@ -868,7 +874,8 @@ actor FramePipeline {
     return SparseFrameStore(
       root: options.root,
       retentionHours: options.retentionHours,
-      includeOcrText: options.includeOcrText
+      includeOcrText: options.includeOcrText,
+      visualRedactionEnabled: options.visualRedactionEnabled
     )
   }
 }

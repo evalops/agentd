@@ -64,6 +64,9 @@ local inspection of the shipped arm64 `codex_chronicle` helper bundled with
 - Optional event-triggered capture mode arms one-shot captures on focused-window
   changes, clipboard updates, and idle fallback ticks behind
   `eventCaptureEnabled`, with debounce/min-gap counters in diagnostics.
+- Optional sparse-frame visual redaction masks OCR text boxes in local JPEG
+  artifacts behind `sparseFrameVisualRedactionEnabled`; remote batch payloads are
+  unchanged.
 - Batches every 30s or 24 frames, whichever first.
 - Local-only mode persists batches under `~/.evalops/agentd/batches/` as
   `0o600` JSON by default and sweeps old or over-budget batches; HTTP mode
@@ -169,6 +172,7 @@ agentd reads and writes `~/.evalops/agentd/config.json`. Important defaults:
 - `sparseFrameStorageRoot: null`
 - `sparseFrameRetentionHours: 6`
 - `sparseFrameIncludeOcrText: false`
+- `sparseFrameVisualRedactionEnabled: false`
 - `batchIntervalSeconds: 30`
 - `maxFramesPerBatch: 24`
 - `maxOcrTextChars: 4096`
@@ -266,10 +270,11 @@ encrypted `.agentdbatch` batches.
 
 Diagnostics reports are written under `~/.evalops/agentd/diagnostics/` with
 `0o600` permissions. They summarize permissions, policy, queue pressure, local
-batches, OCR cache hit-rate counters, event-capture trigger counters, active
-display frame/drop counters, and last submit health without OCR text or raw
-payloads. The same binary also supports `list-displays`, `capture-once`, and
-`selftest` diagnostic subcommands; see `docs/diagnostics.md`.
+batches, OCR cache hit-rate counters, event-capture trigger counters,
+sparse-frame visual-redaction state, active display frame/drop counters, and
+last submit health without OCR text or raw payloads. The same binary also
+supports `list-displays`, `capture-once`, and `selftest` diagnostic subcommands;
+see `docs/diagnostics.md`.
 
 For Chronicle-style local introspection, set `sparseFrameStorageRoot` to a
 directory such as `~/.evalops/agentd/sparse-frames`. agentd then writes
