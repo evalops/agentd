@@ -53,6 +53,7 @@ jobs:
           AGENTD_SPARKLE_FEED_URL: ${{ secrets.AGENTD_SPARKLE_FEED_URL }}
           AGENTD_SPARKLE_PUBLIC_ED_KEY: ${{ secrets.AGENTD_SPARKLE_PUBLIC_ED_KEY }}
           AGENTD_SPARKLE_PRIVATE_ED_KEY: ${{ secrets.AGENTD_SPARKLE_PRIVATE_ED_KEY }}
+          AGENTD_SPARKLE_DOWNLOAD_URL: ${{ inputs.sparkle_download_url }}
         run: |
           set -euo pipefail
           missing=0
@@ -72,7 +73,7 @@ jobs:
               missing=1
             fi
           done
-          if [ -z "${{ inputs.sparkle_download_url }}" ]; then
+          if [ -z "${AGENTD_SPARKLE_DOWNLOAD_URL:-}" ]; then
             echo "::error::Missing required workflow input sparkle_download_url"
             missing=1
           fi

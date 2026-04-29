@@ -598,7 +598,7 @@ enum BrowserPrivacyObservation {
     browserBundleIds.contains(bundleId)
   }
 
-  private static func isMeetingURL(_ value: String?) -> Bool {
+  static func isMeetingURL(_ value: String?) -> Bool {
     guard let value, !value.isEmpty else { return false }
     let lower = value.lowercased()
     guard lower.contains("meet.google.com") else { return false }
@@ -666,6 +666,9 @@ struct PrivacyObservationSignature: Sendable, Hashable {
         return path.hasPrefix(expanded) || path.hasPrefix(prefix)
       }
       return "denied:\(stableClassHash(matched ?? "path"))"
+    }
+    if BrowserPrivacyObservation.isMeetingURL(path) {
+      return "browser_meeting_url"
     }
     return "present"
   }

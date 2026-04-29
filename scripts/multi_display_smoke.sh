@@ -13,7 +13,7 @@ Examples:
   scripts/multi_display_smoke.sh --phase after-detach
 
 Environment:
-  AGENTD_AGENTD_BIN               Existing agentd binary to use.
+  AGENTD_BIN                      Existing agentd binary to use.
   AGENTD_MULTI_DISPLAY_REPORT     Markdown report path.
 USAGE
 }
@@ -54,18 +54,18 @@ done
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 report_path="${AGENTD_MULTI_DISPLAY_REPORT:-"$root/dist/multi-display-smoke-report.md"}"
 snapshot_dir="$(dirname "$report_path")/multi-display-smoke"
-bin="${AGENTD_AGENTD_BIN:-"$root/.build/debug/agentd"}"
+bin="${AGENTD_BIN:-${AGENTD_AGENTD_BIN:-"$root/.build/debug/agentd"}}"
 timestamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 safe_phase="$(printf '%s' "$phase" | tr -c 'A-Za-z0-9._-' '-')"
 json_path="$snapshot_dir/${timestamp}-${safe_phase}.json"
 
-if [[ "$build" == "1" && -z "${AGENTD_AGENTD_BIN:-}" ]]; then
+if [[ "$build" == "1" && -z "${AGENTD_BIN:-}${AGENTD_AGENTD_BIN:-}" ]]; then
   (cd "$root" && swift build)
 fi
 
 if [[ ! -x "$bin" ]]; then
   echo "Missing agentd binary: $bin" >&2
-  echo "Run swift build, or set AGENTD_AGENTD_BIN." >&2
+  echo "Run swift build, or set AGENTD_BIN." >&2
   exit 66
 fi
 
