@@ -97,6 +97,7 @@ actor CaptureService {
       captureAllDisplays: current.captureAllDisplays,
       selectedDisplayIds: current.selectedDisplayIds
     )
+    runningScope = nil
     do {
       try await workerClient.start(scope: next)
       runningScope = next
@@ -421,12 +422,19 @@ final class CaptureWorkerStream: @unchecked Sendable {
   func start(executable: URL, fps: Double) throws {
     stdout.fileHandleForReading.readabilityHandler = { @Sendable [reader] handle in
       let data = handle.availableData
-      guard !data.isEmpty else { return }
+      guard !data.isEmpty else {
+        handle.readabilityHandler = nil
+        return
+      }
       reader.append(data)
     }
     stderr.fileHandleForReading.readabilityHandler = { @Sendable [display] handle in
       let data = handle.availableData
-      guard !data.isEmpty, let message = String(data: data, encoding: .utf8) else { return }
+      guard !data.isEmpty else {
+        handle.readabilityHandler = nil
+        return
+      }
+      guard let message = String(data: data, encoding: .utf8) else { return }
       Log.capture.warning(
         "capture worker stderr display=\(display.displayId, privacy: .public) \(message, privacy: .public)"
       )

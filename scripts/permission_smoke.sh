@@ -56,7 +56,11 @@ elif [[ ! -d "$source_app_path" ]]; then
 fi
 
 if [[ "$install_applications" != "0" ]]; then
-  if [[ "$installed_app_path" != "$applications_dir/"*"EvalOps agentd.app" ]]; then
+  if [[ -z "$applications_dir" || "$applications_dir" == "/" ]]; then
+    echo "Refusing unsafe Applications directory: $applications_dir" >&2
+    exit 64
+  fi
+  if [[ "$(basename "$installed_app_path")" != "EvalOps agentd.app" ]]; then
     echo "Refusing unsafe Applications install path: $installed_app_path" >&2
     exit 64
   fi

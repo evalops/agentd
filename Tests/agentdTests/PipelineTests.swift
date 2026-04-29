@@ -606,6 +606,35 @@ final class PipelineTests: XCTestCase {
     XCTAssertEqual(meetDecision.reasonCode, "browser_meeting_window")
   }
 
+  func testPrivacyDecisionCacheSeparatesBrowserMeetingURLs() {
+    var cache = PrivacyDecisionCache()
+    var cfg = Self.config()
+    cfg.allowedBundleIds += ["com.google.Chrome"]
+
+    let normalDecision = cache.decision(
+      for: Self.context(
+        bundleId: "com.google.Chrome",
+        windowTitle: "Docs",
+        documentPath: "https://docs.google.com/document/d/abc"
+      ),
+      config: cfg
+    )
+    let meetDecision = cache.decision(
+      for: Self.context(
+        bundleId: "com.google.Chrome",
+        windowTitle: "Sprint Review",
+        documentPath: "https://meet.google.com/abc-defg-hij"
+      ),
+      config: cfg
+    )
+
+    XCTAssertTrue(normalDecision.allowed)
+    XCTAssertFalse(meetDecision.allowed)
+    XCTAssertFalse(meetDecision.cached)
+    XCTAssertEqual(meetDecision.reasonCode, "browser_meeting_window")
+    XCTAssertNotEqual(normalDecision.observationId, meetDecision.observationId)
+  }
+
   func testPrivacyDecisionCachePolicyInvalidationChangesObservationId() {
     var cache = PrivacyDecisionCache()
     let cfg = Self.config()

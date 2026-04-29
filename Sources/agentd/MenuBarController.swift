@@ -72,6 +72,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
   private func configure() {
     menu.minimumWidth = 340
+    menu.autoenablesItems = false
     menu.delegate = self
 
     if let button = statusItem.button {
