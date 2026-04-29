@@ -156,6 +156,27 @@ final class PipelineTests: XCTestCase {
     XCTAssertEqual(batch.frames.count, 1)
   }
 
+  func testFailedSubmitKeepsBatchPendingForRetry() async throws {
+    let recorder = BatchRecorder(result: .failed)
+    let pipeline = FramePipeline(config: Self.config(), ocr: StubOCR(text: "clean")) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.flush()
+    let failedStats = await pipeline.pendingStats()
+    XCTAssertEqual(failedStats.frameCount, 1)
+
+    await recorder.setResult(.submitted(nil))
+    await pipeline.flush()
+
+    let batches = await recorder.snapshot()
+    XCTAssertEqual(batches.count, 2)
+    XCTAssertEqual(batches.last?.frames.count, 1)
+    let succeededStats = await pipeline.pendingStats()
+    XCTAssertEqual(succeededStats.frameCount, 0)
+  }
+
   func testFlushEmitsDropOnlyBatch() async throws {
     let recorder = BatchRecorder()
     let pipeline = FramePipeline(config: Self.config(), ocr: StubOCR(text: "clean")) { batch in
@@ -331,9 +352,20 @@ final class PipelineTests: XCTestCase {
 
 actor BatchRecorder {
   private(set) var batches: [Batch] = []
+  private var result: SubmitResult
 
-  func append(_ batch: Batch) {
+  init(result: SubmitResult = .submitted(nil)) {
+    self.result = result
+  }
+
+  @discardableResult
+  func append(_ batch: Batch) -> SubmitResult {
     batches.append(batch)
+    return result
+  }
+
+  func setResult(_ result: SubmitResult) {
+    self.result = result
   }
 
   func snapshot() -> [Batch] {

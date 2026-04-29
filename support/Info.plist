@@ -8,6 +8,8 @@
     <string>agentd</string>
     <key>CFBundleDisplayName</key>
     <string>EvalOps agentd</string>
+    <key>CFBundleExecutable</key>
+    <string>agentd</string>
     <key>CFBundleVersion</key>
     <string>0.0.1</string>
     <key>CFBundleShortVersionString</key>

@@ -316,12 +316,12 @@ actor FramePipeline {
   private var droppedDeniedPath = 0
   private var droppedBackpressure = 0
 
-  private let onBatch: @Sendable (Batch) async -> Void
+  private let onBatch: @Sendable (Batch) async -> SubmitResult
 
   init(
     config: AgentConfig,
     ocr: any OCRRecognizing = VisionOCR(),
-    onBatch: @escaping @Sendable (Batch) async -> Void
+    onBatch: @escaping @Sendable (Batch) async -> SubmitResult
   ) {
     self.config = config
     self.ocr = ocr
@@ -459,7 +459,15 @@ actor FramePipeline {
     droppedDeniedPath = 0
     droppedBackpressure = 0
     startedAt = Date()
-    await onBatch(batch)
+    let result = await onBatch(batch)
+    guard case .failed = result else { return }
+    pending = batch.frames + pending
+    droppedSecret += batch.droppedCounts.secret
+    droppedDup += batch.droppedCounts.duplicate
+    droppedDeniedApp += batch.droppedCounts.deniedApp
+    droppedDeniedPath += batch.droppedCounts.deniedPath
+    droppedBackpressure += batch.droppedCounts.droppedBackpressure
+    startedAt = min(startedAt, batch.startedAt)
   }
 
   private func hasDrops() -> Bool {

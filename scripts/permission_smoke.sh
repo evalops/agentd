@@ -44,7 +44,11 @@ if [[ -f "$root/dist/agentd.zip" ]]; then
 fi
 macos_version="$(sw_vers -productVersion)"
 build_version="$(sw_vers -buildVersion)"
-codesign_summary="$(codesign -dv "$app_path" 2>&1 | sed -n 's/^Authority=//p' | paste -sd ', ' -)"
+codesign_summary="$(
+  codesign -dvv "$app_path" 2>&1 \
+    | sed -n 's/^Authority=//p' \
+    | awk 'NF { if (seen++) printf ", "; printf "%s", $0 } END { if (seen) print "" }'
+)"
 
 cat > "$report_path" <<REPORT
 # agentd Permission Smoke Report

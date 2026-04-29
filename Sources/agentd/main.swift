@@ -241,7 +241,7 @@ final class AppController {
     return HeartbeatRequest(
       deviceId: config.deviceId,
       organizationId: config.organizationId,
-      pendingFrameCount: pending.frameCount + local.fileCount,
+      pendingFrameCount: pending.frameCount,
       pendingBytes: pending.estimatedBytes + local.bytes,
       paused: pauseState.paused,
       pauseReason: pauseState.reason
@@ -283,8 +283,6 @@ final class AppController {
       await capture.updateFps(idleMode ? config.idleFps : config.captureFps)
     }
     await reconcileCaptureState()
-    schedulePauseWindowTimer()
-    updateMenuStatus()
   }
 
   private func reconcileCaptureState() async {
