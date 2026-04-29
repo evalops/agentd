@@ -92,6 +92,9 @@ local inspection of the shipped arm64 `codex_chronicle` helper bundled with
 - The default local allowlist includes common developer surfaces, terminals,
   browsers, issue/chat tools, and LLM coding apps such as Codex, ChatGPT, and
   Claude Desktop.
+- Browser capture has Chronicle-style metadata hardening: private/incognito and
+  meeting browser windows are denied, and browser frames with missing focused
+  window titles fail closed instead of being treated as normal allowed windows.
 - Menu-bar UI: pause/resume (`⌃⌥⌘P`), flush now (`⌃⌥⌘F`), reveal batches dir,
   diagnostics report (`⌃⌥⌘D`), delete queued batches, launch-at-login, quit.
 

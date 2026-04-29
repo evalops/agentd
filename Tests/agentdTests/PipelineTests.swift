@@ -550,6 +550,62 @@ final class PipelineTests: XCTestCase {
     XCTAssertNotEqual(normal.observationId, privateWindow.observationId)
   }
 
+  func testPrivacyDecisionCacheTreatsPauseTitlePatternsCaseInsensitively() {
+    var cache = PrivacyDecisionCache()
+    let cfg = Self.config()
+
+    let decision = cache.decision(
+      for: Self.context(windowTitle: "chrome - INCOGNITO"),
+      config: cfg
+    )
+
+    XCTAssertFalse(decision.allowed)
+    XCTAssertEqual(decision.reasonCode, "pause_title_pattern")
+    XCTAssertEqual(decision.dropKind, .deniedApp)
+  }
+
+  func testBrowserPrivacyObservationFailsClosedOnMissingTitle() {
+    var cache = PrivacyDecisionCache()
+    var cfg = Self.config()
+    cfg.allowedBundleIds += ["com.google.Chrome"]
+
+    let decision = cache.decision(
+      for: Self.context(bundleId: "com.google.Chrome", windowTitle: ""),
+      config: cfg
+    )
+
+    XCTAssertFalse(decision.allowed)
+    XCTAssertEqual(decision.reasonCode, "browser_window_missing_title")
+    XCTAssertEqual(decision.dropKind, .deniedApp)
+  }
+
+  func testBrowserPrivacyObservationDeniesPrivateAndMeetWindows() {
+    var cache = PrivacyDecisionCache()
+    var cfg = Self.config()
+    cfg.allowedBundleIds += ["com.apple.SafariTechnologyPreview", "com.google.Chrome.canary"]
+
+    let privateDecision = cache.decision(
+      for: Self.context(
+        bundleId: "com.apple.SafariTechnologyPreview",
+        windowTitle: "Private Browsing - Docs"
+      ),
+      config: cfg
+    )
+    let meetDecision = cache.decision(
+      for: Self.context(
+        bundleId: "com.google.Chrome.canary",
+        windowTitle: "Sprint Review",
+        documentPath: "https://meet.google.com/abc-defg-hij"
+      ),
+      config: cfg
+    )
+
+    XCTAssertFalse(privateDecision.allowed)
+    XCTAssertEqual(privateDecision.reasonCode, "browser_private_window")
+    XCTAssertFalse(meetDecision.allowed)
+    XCTAssertEqual(meetDecision.reasonCode, "browser_meeting_window")
+  }
+
   func testPrivacyDecisionCachePolicyInvalidationChangesObservationId() {
     var cache = PrivacyDecisionCache()
     let cfg = Self.config()

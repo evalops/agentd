@@ -21,3 +21,8 @@ add allowlists or denylists, but the built-in password managers, keychain paths,
 private/incognito/meeting title pauses, denied paths, and content-aware secret
 scrub remain local fail-closed controls.
 
+Browser windows get an additional Chronicle-parity privacy check before OCR or
+content scrub. Supported browser bundle IDs fail closed when Accessibility
+cannot provide a focused-window title, and private/incognito or meeting browser
+windows are denied by browser-window observation even if the bundle is otherwise
+allowed. This keeps degraded browser metadata from becoming an accidental allow.

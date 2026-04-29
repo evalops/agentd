@@ -433,7 +433,11 @@ struct AgentConfig: Codable, Sendable {
     "com.anthropic.claudefordesktop",
     "company.thebrowser.Browser",  // Arc
     "com.google.Chrome",
+    "com.google.Chrome.beta",
+    "com.google.Chrome.canary",
+    "com.google.Chrome.dev",
     "com.apple.Safari",
+    "com.apple.SafariTechnologyPreview",
     "org.mozilla.firefox",
     "com.linear.LinearDesktop",
     "com.tinyspeck.slackmacgap",
