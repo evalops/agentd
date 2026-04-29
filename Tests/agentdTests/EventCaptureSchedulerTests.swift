@@ -105,6 +105,20 @@ final class EventCaptureSchedulerTests: XCTestCase {
     XCTAssertFalse(scheduler.stats().enabled)
   }
 
+  func testNativeEventRequestsUseMinGapAndCounters() {
+    var scheduler = EventCaptureScheduler(config: Self.config())
+    let start = Date(timeIntervalSince1970: 100)
+
+    XCTAssertEqual(scheduler.request(.click, now: start), .click)
+    XCTAssertNil(scheduler.request(.typingPause, now: start.addingTimeInterval(0.1)))
+    XCTAssertEqual(scheduler.request(.scrollStop, now: start.addingTimeInterval(1.1)), .scrollStop)
+
+    let stats = scheduler.stats()
+    XCTAssertEqual(stats.triggerCounts[.click], 1)
+    XCTAssertEqual(stats.triggerCounts[.scrollStop], 1)
+    XCTAssertEqual(stats.triggersSuppressedByMinGap, 1)
+  }
+
   private static func config() -> AgentConfig {
     AgentConfig(
       deviceId: "device_1",

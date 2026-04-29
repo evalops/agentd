@@ -25,6 +25,9 @@ final class AppController {
   private var captureRetryTimer: Timer?
   private var foregroundPrivacyTimer: Timer?
   private var eventCaptureTimer: Timer?
+  private var eventMonitors: [Any] = []
+  private var typingPauseTimer: Timer?
+  private var scrollStopTimer: Timer?
   private var foregroundPrivacyPauseReason: String?
   private var eventCaptureScheduler: EventCaptureScheduler
   private var eventCaptureInFlight = false
@@ -104,7 +107,8 @@ final class AppController {
     let pipeline = pipeline
     capture = CaptureService { [pipeline] frame in
       let ctx = await MainActor.run { WindowContextProbe.current() }
-      await pipeline.consume(frame, context: ctx)
+      let axText = await MainActor.run { AccessibilityTextExtractor.current(context: ctx) }
+      await pipeline.consume(frame, context: ctx, accessibilityText: axText)
     } onFrameDropped: { [pipeline] _ in
       await pipeline.recordBackpressureDrop()
     }
@@ -160,7 +164,7 @@ final class AppController {
     ) { [weak self] _ in
       Task { @MainActor in await self?.pollIdleState() }
     }
-    scheduleEventCaptureTimer()
+    scheduleEventCaptureInfrastructure()
     if controlClient != nil {
       heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
         Task { @MainActor in await self?.sendHeartbeat() }
@@ -325,6 +329,7 @@ final class AppController {
     config = next
     eventCaptureScheduler.updateConfig(next)
     await pipeline.updateConfig(next)
+    scheduleEventCaptureInfrastructure()
     if intervalChanged {
       scheduleFlushTimer()
     }
@@ -356,7 +361,7 @@ final class AppController {
     } else if !shouldPause, !captureRunning {
       if config.eventCaptureEnabled {
         captureRunning = true
-        scheduleEventCaptureTimer()
+        scheduleEventCaptureInfrastructure()
         schedulePauseWindowTimer()
         updateMenuStatus()
         return
@@ -425,6 +430,7 @@ final class AppController {
     let permissions = PermissionSnapshot.current(promptForAccessibility: false)
     let pending = await pipeline.pendingStats()
     let ocrCacheStats = await pipeline.ocrCacheStats()
+    let textSourceStats = await pipeline.textSourceStats()
     let localStats = await submitter.localBatchStats()
     let localBatches = await submitter.localBatchSummaries()
     let lastSubmitResult = await submitter.lastSubmitResult()
@@ -440,6 +446,7 @@ final class AppController {
       controlError: controlState.lastError,
       pendingStats: pending,
       ocrCacheStats: ocrCacheStats,
+      textSourceStats: textSourceStats,
       eventCaptureStats: eventCaptureScheduler.stats(),
       localBatchStats: localStats,
       localBatches: localBatches,
@@ -489,6 +496,67 @@ final class AppController {
     }
   }
 
+  private func scheduleEventCaptureInfrastructure() {
+    scheduleEventCaptureTimer()
+    installNativeEventMonitors()
+  }
+
+  private func installNativeEventMonitors() {
+    for monitor in eventMonitors {
+      NSEvent.removeMonitor(monitor)
+    }
+    eventMonitors.removeAll()
+    typingPauseTimer?.invalidate()
+    typingPauseTimer = nil
+    scrollStopTimer?.invalidate()
+    scrollStopTimer = nil
+
+    guard config.eventCaptureEnabled else { return }
+    let clickMonitor = NSEvent.addGlobalMonitorForEvents(
+      matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+    ) { [weak self] _ in
+      Task { @MainActor in await self?.requestEventCapture(.click) }
+    }
+    let keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] _ in
+      Task { @MainActor in self?.scheduleTypingPauseTrigger() }
+    }
+    let scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) {
+      [weak self] _ in
+      Task { @MainActor in self?.scheduleScrollStopTrigger() }
+    }
+    eventMonitors = [clickMonitor, keyMonitor, scrollMonitor].compactMap { $0 }
+    if eventMonitors.count < 3 {
+      Log.capture.warning(
+        "native event capture monitors unavailable; polling triggers remain active")
+    }
+  }
+
+  private func scheduleTypingPauseTrigger() {
+    typingPauseTimer?.invalidate()
+    typingPauseTimer = Timer.scheduledTimer(
+      withTimeInterval: max(0.1, config.eventCaptureDebounceSeconds),
+      repeats: false
+    ) { [weak self] _ in
+      Task { @MainActor in await self?.requestEventCapture(.typingPause) }
+    }
+  }
+
+  private func scheduleScrollStopTrigger() {
+    scrollStopTimer?.invalidate()
+    scrollStopTimer = Timer.scheduledTimer(
+      withTimeInterval: max(0.1, config.eventCaptureDebounceSeconds),
+      repeats: false
+    ) { [weak self] _ in
+      Task { @MainActor in await self?.requestEventCapture(.scrollStop) }
+    }
+  }
+
+  private func requestEventCapture(_ trigger: EventCaptureTrigger) async {
+    guard captureRunning, config.eventCaptureEnabled, !effectivePauseState().paused else { return }
+    guard let accepted = eventCaptureScheduler.request(trigger, now: Date()) else { return }
+    await captureEvent(trigger: accepted)
+  }
+
   private func pollEventCaptureTriggers() async {
     guard captureRunning, config.eventCaptureEnabled, !effectivePauseState().paused else { return }
     let triggers = eventCaptureScheduler.observe(
@@ -513,7 +581,8 @@ final class AppController {
         onFrameDropped: { [pipeline] _ in await pipeline.recordBackpressureDrop() }
       )
       let context = WindowContextProbe.current()
-      await pipeline.consume(frame, context: context)
+      let axText = AccessibilityTextExtractor.current(context: context)
+      await pipeline.consume(frame, context: context, accessibilityText: axText)
       eventCaptureScheduler.recordCaptureSucceeded()
       Log.capture.info("event capture succeeded trigger=\(trigger.rawValue, privacy: .public)")
     } catch {
