@@ -12,11 +12,13 @@ Chronicle-style local capture.
 | Broker mode | Optional ASB Secret Broker artifact wrapping | No broker artifact path |
 | Summarization | Server/control-plane concern, not device default | LLM summarizer loop |
 | Prompt-injection posture | Observed content is not fed to an on-device agent by default | Prompt framing around observed content |
+| Local sparse artifacts | Opt-in sparse-frame store after policy and secret scrub | Default local temp frame/OCR sidecars |
 | Release evidence | Developer ID/notarization workflow plus hardware-smoke helper | Signed/notarized app bundle |
 
 Borrowed ideas worth keeping:
 
 - material-text-change OCR diffs as a secondary sampler;
+- sessionized per-display latest-frame and sparse historical frame artifacts;
 - multi-display observability;
 - downstream heartbeat-recency checks;
 - explicit prompt-injection taxonomies for any future summarizer consumer.
@@ -29,4 +31,3 @@ Things agentd should not copy:
 - audio capture without a stated audit reason;
 - update metadata that can advance without the signing/notarization evidence
   chain.
-

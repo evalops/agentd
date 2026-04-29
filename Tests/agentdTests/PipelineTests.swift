@@ -283,6 +283,77 @@ final class PipelineTests: XCTestCase {
     XCTAssertGreaterThan(dropped, 0)
   }
 
+  func testSparseFrameStoreWritesChronicleStyleArtifactsAfterScrub() async throws {
+    let root = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var cfg = Self.config()
+    cfg.sparseFrameStorageRoot = root.path
+
+    let recorder = BatchRecorder()
+    let pipeline = FramePipeline(config: cfg, ocr: StubOCR(text: "visible work context")) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.flush()
+
+    let files = try FileManager.default.contentsOfDirectory(atPath: root.path)
+    XCTAssertTrue(files.contains { $0.hasSuffix("-display-1-latest.jpg") })
+    XCTAssertTrue(files.contains { $0.hasSuffix("-display-1.capture") })
+    XCTAssertTrue(files.contains { $0.hasSuffix("-display-1.capture.json") })
+    let ocrSidecar = try XCTUnwrap(files.first(where: { $0.hasSuffix("-display-1.ocr.jsonl") }))
+    let ocrText = try String(contentsOf: root.appendingPathComponent(ocrSidecar), encoding: .utf8)
+    XCTAssertTrue(ocrText.contains("\"ocrTextHash\""))
+    XCTAssertFalse(ocrText.contains("visible work context"))
+
+    let segmentDirectory = try XCTUnwrap(
+      files.first(where: { $0.contains("-display-1") && !$0.contains(".") }))
+    let sparseFrames = try FileManager.default.contentsOfDirectory(
+      atPath: root.appendingPathComponent(segmentDirectory).path)
+    XCTAssertTrue(sparseFrames.contains { $0.hasPrefix("frame-0-") && $0.hasSuffix("Z.jpg") })
+  }
+
+  func testSparseFrameStoreCanOptIntoRawOcrSidecarForLocalDebugging() async throws {
+    let root = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var cfg = Self.config()
+    cfg.sparseFrameStorageRoot = root.path
+    cfg.sparseFrameIncludeOcrText = true
+
+    let recorder = BatchRecorder()
+    let pipeline = FramePipeline(config: cfg, ocr: StubOCR(text: "debuggable text")) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+
+    let sidecar = try XCTUnwrap(
+      try FileManager.default.contentsOfDirectory(atPath: root.path).first {
+        $0.hasSuffix(".ocr.jsonl")
+      })
+    let ocrText = try String(contentsOf: root.appendingPathComponent(sidecar), encoding: .utf8)
+    XCTAssertTrue(ocrText.contains("debuggable text"))
+  }
+
+  func testSparseFrameStoreKeepsSessionAcrossUnchangedConfigRefresh() async throws {
+    let root = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var cfg = Self.config()
+    cfg.sparseFrameStorageRoot = root.path
+
+    let recorder = BatchRecorder()
+    let pipeline = FramePipeline(config: cfg, ocr: StubOCR(text: "same session")) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.updateConfig(cfg)
+    await pipeline.consume(Self.frame(bits: 0x5555_5555_5555_5555), context: Self.context())
+
+    let files = try FileManager.default.contentsOfDirectory(atPath: root.path)
+    XCTAssertEqual(files.filter { $0.contains("-display-1") && !$0.contains(".") }.count, 1)
+  }
+
   func testDisplaySelectionPrefersExplicitIdsThenAllThenPrimary() {
     XCTAssertEqual(
       DisplaySelection.selectedDisplayIds(
@@ -374,6 +445,12 @@ final class PipelineTests: XCTestCase {
       }
     }
     return context.makeImage()!
+  }
+
+  static func temporaryDirectory() throws -> URL {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
   }
 }
 
