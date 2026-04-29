@@ -127,6 +127,9 @@ capture startup in the background so a full relaunch is not required.
 For ad-hoc local builds, approve the exact packaged app you are testing and use
 `./script/build_and_run.sh --tcc-verify`; rebuilding changes the CDHash and can
 make macOS treat it as a different TCC client.
+For a downloaded/notarized workflow artifact, verify the artifact in place with
+`AGENTD_APP_PATH="/path/to/EvalOps agentd.app" ./script/build_and_run.sh --tcc-verify`
+so the tested path/signature matches the System Settings grant.
 `--local-batch-verify` also relaunches without rebuilding, activates Codex by
 default, and prints only frame counts/metadata lengths so OCR text is not echoed
 into the terminal. Set `AGENTD_SMOKE_FOREGROUND_APP=Terminal` or another

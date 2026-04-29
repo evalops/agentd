@@ -6,10 +6,12 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 app_name="EvalOps agentd"
 process_name="agentd"
 bundle_id="dev.evalops.agentd"
-app_bundle="$root/dist/$app_name.app"
+default_app_bundle="$root/dist/$app_name.app"
+app_bundle="${AGENTD_APP_PATH:-"$default_app_bundle"}"
 
 usage() {
   echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--reuse|--tcc-verify|--local-batch-verify|--permission-smoke]" >&2
+  echo "       set AGENTD_APP_PATH to verify a downloaded/notarized app bundle without copying it into dist/" >&2
   exit 2
 }
 
@@ -24,9 +26,22 @@ build_app() {
 require_existing_app() {
   if [[ ! -x "$app_bundle/Contents/MacOS/$process_name" ]]; then
     echo "Missing packaged app: $app_bundle" >&2
-    echo "Run $0 once before no-rebuild verification." >&2
+    echo "Run $0 once before no-rebuild verification, or set AGENTD_APP_PATH to an existing app bundle." >&2
     exit 66
   fi
+}
+
+describe_app_identity() {
+  echo "App bundle: $app_bundle" >&2
+  if codesign_details="$(codesign -dvvv "$app_bundle" 2>&1)"; then
+    printf '%s\n' "$codesign_details" \
+      | sed -n 's/^Authority=/Codesign authority: /p; s/^CDHash=/Codesign CDHash: /p; s/^TeamIdentifier=/Team identifier: /p; s/^Notarization Ticket=/Notarization ticket: /p' >&2
+  else
+    printf '%s\n' "$codesign_details" >&2
+  fi
+  codesign -d -r- "$app_bundle" 2>&1 \
+    | sed -n 's/^# designated => /Designated requirement: /p; s/^designated => /Designated requirement: /p' >&2 || true
+  spctl -a -vv "$app_bundle" >&2 || true
 }
 
 open_app() {
@@ -89,7 +104,10 @@ case "$mode" in
     if grep -q 'capture started' <<<"$recent_logs"; then
       echo "TCC verification passed: capture started."
     elif grep -q 'capture start failed' <<<"$recent_logs"; then
-      echo "TCC verification failed: capture did not start. If this app is ad-hoc signed, approve this exact packaged copy and rerun --tcc-verify without rebuilding." >&2
+      describe_app_identity
+      echo "TCC verification failed: capture did not start." >&2
+      echo "Approve this exact app bundle in Screen & System Audio Recording and Accessibility, then rerun with the same AGENTD_APP_PATH without rebuilding or moving the app." >&2
+      echo "If System Settings already shows EvalOps agentd.app enabled, the visible row may be a stale path/signature entry; remove it and re-add this exact app bundle before rerunning." >&2
       exit 78
     else
       echo "TCC verification inconclusive: no capture start/failure log found." >&2

@@ -50,7 +50,10 @@ codesign_summary="$(
     | sed -n 's/^Authority=//p' \
     | awk 'NF { if (seen++) printf ", "; printf "%s", $0 } END { if (seen) print "" }'
 )"
-codesign_requirement="$(codesign -d -r- "$app_path" 2>&1 | sed -n 's/^# designated => //p')"
+codesign_requirement="$(
+  codesign -d -r- "$app_path" 2>&1 \
+    | sed -n 's/^# designated => //p; s/^designated => //p'
+)"
 codesign_cdhash="$(
   printf '%s\n' "$codesign_details" \
     | sed -n 's/^CDHash=//p; s/^CandidateCDHash sha256=//p' \
@@ -79,8 +82,14 @@ approval to the exact CDHash above. Do not rebuild between granting permissions
 and verification. After approving this exact packaged app, relaunch it with:
 
 \`\`\`
-./script/build_and_run.sh --tcc-verify
+AGENTD_APP_PATH="${app_path}" ./script/build_and_run.sh --tcc-verify
 \`\`\`
+
+If System Settings shows "EvalOps agentd.app" enabled but capture still fails
+with a TCC denial, remove the existing Screen & System Audio Recording and
+Accessibility rows and re-add the exact app path above. macOS can retain a
+stale path/signature row with the same display name after ad-hoc or downloaded
+artifact changes.
 
 ## Checks
 
@@ -101,7 +110,7 @@ echo "Wrote $report_path"
 if [[ "$launch" == "1" ]]; then
   open "$app_path"
   echo "Opened $app_path"
-  echo "Grant Screen Recording and Accessibility in System Settings, then run ./script/build_and_run.sh --tcc-verify without rebuilding."
+  echo "Grant Screen Recording and Accessibility in System Settings, then run AGENTD_APP_PATH=\"$app_path\" ./script/build_and_run.sh --tcc-verify without rebuilding or moving the app."
 else
   echo "Skipped launch because --no-launch was supplied."
 fi
