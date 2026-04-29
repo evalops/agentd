@@ -276,6 +276,7 @@ are available.
   ([evalops/platform#1078](https://github.com/evalops/platform/issues/1078)).
 - Hardware-backed permission-flow smoke test for Screen Recording and
   Accessibility prompts.
+- macOS framework availability inventory: `docs/macos-availability.md`.
 
 ## Layout
 
