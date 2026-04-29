@@ -13,6 +13,7 @@ final class AppController {
   private var runtimeLock: AgentdRuntimeLock?
   private var capture: CaptureService!
   private var menuBar: MenuBarController!
+  private var permissionSetupWindow: PermissionSetupWindowController?
   private var userPaused = false
   private var captureRunning = false
   private var controlState = ChronicleControlState()
@@ -139,6 +140,9 @@ final class AppController {
       },
       onRefreshPermissions: { [weak self] in
         Task { @MainActor in self?.updateMenuStatus() }
+      },
+      onOpenPermissionSetup: { [weak self] in
+        Task { @MainActor in self?.openPermissionSetupWindow() }
       },
       onOpenScreenRecordingSettings: {
         Task { @MainActor in
@@ -667,6 +671,27 @@ final class AppController {
       localOnly: config.localOnly,
       policyVersion: controlState.lastPolicyVersion
     )
+  }
+
+  private func openPermissionSetupWindow() {
+    if permissionSetupWindow == nil {
+      permissionSetupWindow = PermissionSetupWindowController(
+        currentPermissions: {
+          PermissionSnapshot.current(promptForAccessibility: false)
+        },
+        onOpenScreenRecordingSettings: {
+          AppController.openSystemSettingsPane("Privacy_ScreenCapture")
+        },
+        onOpenAccessibilitySettings: {
+          AppController.openSystemSettingsPane("Privacy_Accessibility")
+        },
+        onRelaunch: {
+          AppController.relaunchApplication()
+        }
+      )
+    }
+    updateMenuStatus()
+    permissionSetupWindow?.show()
   }
 
   private static func openSystemSettingsPane(_ pane: String) {
