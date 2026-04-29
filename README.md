@@ -108,6 +108,7 @@ swift run agentd -- capture-once --no-ocr
 swift test
 python3 scripts/mock_chronicle.py --self-test Tests/Fixtures/chronicle
 python3 scripts/chronicle_parity_audit.py # compare installed Codex Chronicle helper
+scripts/multi_display_smoke.sh --phase before-attach # capture #34 display evidence
 scripts/package_app.sh # release .app bundle with hardened runtime signing
 scripts/permission_smoke.sh --no-launch # generate permission-smoke evidence template
 ./script/build_and_run.sh --verify # package, launch, and verify the menu app process
@@ -161,6 +162,11 @@ it:
 version/checksum/codesign evidence in `dist/permission-smoke-report.md`, and
 opens the app unless `--no-launch` is supplied. Use it for the hardware-backed
 Screen Recording and Accessibility permission smoke.
+`scripts/multi_display_smoke.sh` records repeatable `list-displays` snapshots
+for before-attach, after-attach, capture-all, and after-detach phases. It writes
+bounded JSON and a Markdown report without screenshots or OCR text, and
+`--require-multiple` fails when the attached-display phase still sees fewer
+than two displays.
 
 Launch-at-login uses native `SMAppService.mainApp` from the menu bar; agentd
 does not install LaunchAgent plists.
