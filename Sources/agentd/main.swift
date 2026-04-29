@@ -137,6 +137,9 @@ final class AppController {
       onDeleteQueuedBatches: { [weak self] in
         Task { @MainActor in await self?.deleteQueuedBatches() }
       },
+      onRefreshPermissions: { [weak self] in
+        Task { @MainActor in self?.updateMenuStatus() }
+      },
       onOpenScreenRecordingSettings: {
         Task { @MainActor in
           AppController.openSystemSettingsPane("Privacy_ScreenCapture")
@@ -145,6 +148,11 @@ final class AppController {
       onOpenAccessibilitySettings: {
         Task { @MainActor in
           AppController.openSystemSettingsPane("Privacy_Accessibility")
+        }
+      },
+      onRelaunch: {
+        Task { @MainActor in
+          AppController.relaunchApplication()
         }
       },
       onLaunchAtLoginToggle: { enabled in
@@ -667,6 +675,22 @@ final class AppController {
         string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")
     else { return }
     NSWorkspace.shared.open(url)
+  }
+
+  private static func relaunchApplication() {
+    guard Bundle.main.bundleURL.pathExtension == "app" else {
+      NSApp.terminate(nil)
+      return
+    }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    process.arguments = ["-n", Bundle.main.bundleURL.path]
+    do {
+      try process.run()
+    } catch {
+      Log.app.error("relaunch failed: \(error.localizedDescription, privacy: .public)")
+    }
+    NSApp.terminate(nil)
   }
 }
 

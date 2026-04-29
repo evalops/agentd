@@ -95,10 +95,10 @@ local inspection of the shipped arm64 `codex_chronicle` helper bundled with
 - Browser capture has Chronicle-style metadata hardening: private/incognito and
   meeting browser windows are denied, and browser frames with missing focused
   window titles fail closed instead of being treated as normal allowed windows.
-- Menu-bar UI: permission status with direct Screen Recording and Accessibility
-  settings actions, pause/resume (`⌃⌥⌘P`), flush now (`⌃⌥⌘F`), reveal batches
-  dir, diagnostics report (`⌃⌥⌘D`), delete queued batches, launch-at-login,
-  quit.
+- Menu-bar UI: capture and permission status, direct Screen Recording and
+  Accessibility settings actions, permission refresh, relaunch, pause/resume
+  (`⌃⌥⌘P`), flush now (`⌃⌥⌘F`), reveal batches dir, diagnostics report
+  (`⌃⌥⌘D`), delete queued batches, launch-at-login, quit.
 
 ## Build
 
@@ -126,7 +126,8 @@ permission preflight or display discovery times out.
 First run will trigger the system Screen Recording and Accessibility prompts the
 first time the gated APIs are called. Grant both in System Settings → Privacy &
 Security. If capture starts before the grants are complete, agentd retries
-capture startup in the background so a full relaunch is not required.
+capture startup in the background; the menu also includes permission refresh,
+System Settings, and relaunch actions for TCC recovery.
 For ad-hoc local builds, approve the exact packaged app you are testing and use
 `./script/build_and_run.sh --tcc-verify`; rebuilding changes the CDHash and can
 make macOS treat it as a different TCC client.

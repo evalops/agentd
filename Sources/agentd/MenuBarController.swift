@@ -7,6 +7,8 @@ import Foundation
 final class MenuBarController: NSObject {
   private let statusItem: NSStatusItem
   private let menu = NSMenu()
+  private var captureStateItem: NSMenuItem?
+  private var pauseItem: NSMenuItem?
   private var permissionItem: NSMenuItem?
   private var screenRecordingItem: NSMenuItem?
   private var accessibilityItem: NSMenuItem?
@@ -19,8 +21,10 @@ final class MenuBarController: NSObject {
   private let onOpenBatchesDir: @Sendable () -> Void
   private let onOpenDiagnostics: @Sendable () -> Void
   private let onDeleteQueuedBatches: @Sendable () -> Void
+  private let onRefreshPermissions: @Sendable () -> Void
   private let onOpenScreenRecordingSettings: @Sendable () -> Void
   private let onOpenAccessibilitySettings: @Sendable () -> Void
+  private let onRelaunch: @Sendable () -> Void
   private let onLaunchAtLoginToggle: @Sendable (Bool) -> Void
   private let onQuit: @Sendable () -> Void
 
@@ -30,8 +34,10 @@ final class MenuBarController: NSObject {
     onOpenBatchesDir: @escaping @Sendable () -> Void,
     onOpenDiagnostics: @escaping @Sendable () -> Void,
     onDeleteQueuedBatches: @escaping @Sendable () -> Void,
+    onRefreshPermissions: @escaping @Sendable () -> Void,
     onOpenScreenRecordingSettings: @escaping @Sendable () -> Void,
     onOpenAccessibilitySettings: @escaping @Sendable () -> Void,
+    onRelaunch: @escaping @Sendable () -> Void,
     onLaunchAtLoginToggle: @escaping @Sendable (Bool) -> Void,
     onQuit: @escaping @Sendable () -> Void
   ) {
@@ -40,8 +46,10 @@ final class MenuBarController: NSObject {
     self.onOpenBatchesDir = onOpenBatchesDir
     self.onOpenDiagnostics = onOpenDiagnostics
     self.onDeleteQueuedBatches = onDeleteQueuedBatches
+    self.onRefreshPermissions = onRefreshPermissions
     self.onOpenScreenRecordingSettings = onOpenScreenRecordingSettings
     self.onOpenAccessibilitySettings = onOpenAccessibilitySettings
+    self.onRelaunch = onRelaunch
     self.onLaunchAtLoginToggle = onLaunchAtLoginToggle
     self.onQuit = onQuit
     self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -57,10 +65,18 @@ final class MenuBarController: NSObject {
       button.toolTip = "agentd — capturing"
     }
 
+    let captureStateItem = NSMenuItem(title: "Status: Starting…", action: nil, keyEquivalent: "")
+    captureStateItem.isEnabled = false
+    self.captureStateItem = captureStateItem
+    menu.addItem(captureStateItem)
+
+    menu.addItem(.separator())
+
     let pauseItem = NSMenuItem(
       title: "Pause Capture", action: #selector(togglePause), keyEquivalent: "p")
     pauseItem.keyEquivalentModifierMask = [.command, .option, .control]
     pauseItem.target = self
+    self.pauseItem = pauseItem
     menu.addItem(pauseItem)
 
     let flushItem = NSMenuItem(
@@ -95,6 +111,11 @@ final class MenuBarController: NSObject {
     self.permissionItem = permissionItem
     menu.addItem(permissionItem)
 
+    let refreshPermissionsItem = NSMenuItem(
+      title: "Check Permission Status", action: #selector(refreshPermissions), keyEquivalent: "")
+    refreshPermissionsItem.target = self
+    menu.addItem(refreshPermissionsItem)
+
     let screenRecordingItem = NSMenuItem(
       title: "Open Screen & System Audio Recording Settings",
       action: #selector(openScreenRecordingSettings),
@@ -112,6 +133,11 @@ final class MenuBarController: NSObject {
     accessibilityItem.target = self
     self.accessibilityItem = accessibilityItem
     menu.addItem(accessibilityItem)
+
+    let relaunchItem = NSMenuItem(
+      title: "Relaunch agentd", action: #selector(relaunch), keyEquivalent: "")
+    relaunchItem.target = self
+    menu.addItem(relaunchItem)
 
     menu.addItem(.separator())
 
@@ -141,9 +167,7 @@ final class MenuBarController: NSObject {
   @objc private func togglePause() {
     paused.toggle()
     updateStatusButton(detail: paused ? "paused" : "capturing")
-    if let item = menu.items.first {
-      item.title = paused ? "Resume Capture" : "Pause Capture"
-    }
+    pauseItem?.title = paused ? "Resume Capture" : "Pause Capture"
     onPauseToggle(paused)
   }
 
@@ -151,8 +175,10 @@ final class MenuBarController: NSObject {
   @objc private func reveal() { onOpenBatchesDir() }
   @objc private func openDiagnostics() { onOpenDiagnostics() }
   @objc private func deleteQueuedBatches() { onDeleteQueuedBatches() }
+  @objc private func refreshPermissions() { onRefreshPermissions() }
   @objc private func openScreenRecordingSettings() { onOpenScreenRecordingSettings() }
   @objc private func openAccessibilitySettings() { onOpenAccessibilitySettings() }
+  @objc private func relaunch() { onRelaunch() }
   @objc private func toggleLaunchAtLogin() {
     let next = !(launchAtLoginItem?.state == .on)
     launchAtLoginItem?.state = next ? .on : .off
@@ -170,9 +196,8 @@ final class MenuBarController: NSObject {
     self.paused = paused
     needsPermission = !permissions.allTrusted
     updateStatusButton(detail: detail)
-    if let item = menu.items.first {
-      item.title = paused ? "Resume Capture" : "Pause Capture"
-    }
+    pauseItem?.title = paused ? "Resume Capture" : "Pause Capture"
+    captureStateItem?.title = "Status: \(detail)"
     permissionItem?.title = "Permissions: \(permissions.menuSummary)"
     screenRecordingItem?.isEnabled = !permissions.screenCaptureTrusted
     accessibilityItem?.isEnabled = !permissions.accessibilityTrusted
