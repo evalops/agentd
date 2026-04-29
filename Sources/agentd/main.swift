@@ -405,6 +405,7 @@ final class AppController {
   private func openDiagnosticsReport() async {
     let permissions = PermissionSnapshot.current(promptForAccessibility: false)
     let pending = await pipeline.pendingStats()
+    let ocrCacheStats = await pipeline.ocrCacheStats()
     let localStats = await submitter.localBatchStats()
     let localBatches = await submitter.localBatchSummaries()
     let lastSubmitResult = await submitter.lastSubmitResult()
@@ -419,6 +420,7 @@ final class AppController {
       policySource: policySource,
       controlError: controlState.lastError,
       pendingStats: pending,
+      ocrCacheStats: ocrCacheStats,
       localBatchStats: localStats,
       localBatches: localBatches,
       captureDisplayStats: captureDisplayStats,

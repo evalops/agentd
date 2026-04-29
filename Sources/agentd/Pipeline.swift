@@ -347,6 +347,118 @@ struct OcrDiffSampler: Sendable {
   }
 }
 
+struct OCRCacheStats: Sendable, Equatable {
+  let entries: Int
+  let hits: Int
+  let misses: Int
+  let evictions: Int
+
+  var hitRate: Double {
+    let total = hits + misses
+    guard total > 0 else { return 0 }
+    return Double(hits) / Double(total)
+  }
+}
+
+struct OCRResultCache: Sendable {
+  private var entries: [OCRCacheKey: OCRCacheEntry] = [:]
+  private var order: [OCRCacheKey] = []
+  private let maxEntries: Int
+  private var hits = 0
+  private var misses = 0
+  private var evictions = 0
+
+  init(maxEntries: Int = 128) {
+    self.maxEntries = max(1, maxEntries)
+  }
+
+  mutating func result(for key: OCRCacheKey) -> OCRResult? {
+    guard let entry = entries[key] else {
+      misses += 1
+      return nil
+    }
+    hits += 1
+    return entry.result
+  }
+
+  mutating func insert(_ result: OCRResult, for key: OCRCacheKey) {
+    if entries[key] == nil {
+      order.append(key)
+    }
+    entries[key] = OCRCacheEntry(result: result)
+    evictIfNeeded()
+  }
+
+  func stats() -> OCRCacheStats {
+    OCRCacheStats(entries: entries.count, hits: hits, misses: misses, evictions: evictions)
+  }
+
+  private mutating func evictIfNeeded() {
+    while entries.count > maxEntries, let oldest = order.first {
+      order.removeFirst()
+      if entries.removeValue(forKey: oldest) != nil {
+        evictions += 1
+      }
+    }
+  }
+}
+
+struct OCRCacheKey: Sendable, Hashable {
+  let bundleId: String
+  let pid: pid_t
+  let titleHash: String
+  let documentHash: String
+  let imageHash: UInt64
+
+  init(context: WindowContext, imageHash: UInt64) {
+    self.bundleId = context.bundleId
+    self.pid = context.pid
+    self.titleHash = Self.hashSurface(context.windowTitle)
+    self.documentHash = Self.hashSurface(context.documentPath ?? "")
+    self.imageHash = imageHash
+  }
+
+  private static func hashSurface(_ value: String) -> String {
+    let digest = SHA256.hash(data: Data(value.utf8))
+    return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+private struct OCRCacheEntry: Sendable {
+  let result: OCRResult
+}
+
+enum ImageContentHash {
+  static func calculate(cgImage: CGImage, sampleSize: Int = 32) -> UInt64? {
+    let width = max(1, sampleSize)
+    let height = max(1, sampleSize)
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    let drew = pixels.withUnsafeMutableBytes { buffer in
+      guard
+        let context = CGContext(
+          data: buffer.baseAddress,
+          width: width,
+          height: height,
+          bitsPerComponent: 8,
+          bytesPerRow: width * 4,
+          space: CGColorSpaceCreateDeviceRGB(),
+          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
+      else {
+        return false
+      }
+      context.interpolationQuality = .low
+      context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+      return true
+    }
+    guard drew else { return nil }
+    let digest = SHA256.hash(data: Data(pixels))
+    return digest.prefix(8).reduce(UInt64(0)) { partial, byte in
+      (partial << 8) | UInt64(byte)
+    }
+  }
+}
+
 enum PrivacyDropKind: Sendable, Equatable {
   case deniedApp
   case deniedPath
@@ -500,6 +612,7 @@ actor FramePipeline {
   private let ocr: any OCRRecognizing
   private var dedupWindow = DedupWindow(capacity: 16, threshold: 5)
   private var lastEmittedOcrText: String?
+  private var ocrCache = OCRResultCache()
   private var privacyDecisionCache = PrivacyDecisionCache()
   private var sparseFrameStore: SparseFrameStore?
   private var sparseFrameStoreOptions: SparseFrameStoreOptions?
@@ -545,6 +658,10 @@ actor FramePipeline {
     return PendingFrameStats(frameCount: pending.count, estimatedBytes: pendingBytes)
   }
 
+  func ocrCacheStats() -> OCRCacheStats {
+    ocrCache.stats()
+  }
+
   func consume(_ frame: CapturedFrame, context: WindowContext?) async {
     guard let ctx = context else { return }
 
@@ -572,11 +689,21 @@ actor FramePipeline {
     }
 
     let ocrResult: OCRResult
-    do {
-      ocrResult = try await ocr.recognize(cgImage: frame.cgImage)
-    } catch {
-      Log.ocr.error("ocr failed: \(error.localizedDescription, privacy: .public)")
-      return
+    let ocrCacheKey = ImageContentHash.calculate(cgImage: frame.cgImage).map {
+      OCRCacheKey(context: ctx, imageHash: $0)
+    }
+    if let ocrCacheKey, let cached = ocrCache.result(for: ocrCacheKey) {
+      ocrResult = cached
+    } else {
+      do {
+        ocrResult = try await ocr.recognize(cgImage: frame.cgImage)
+        if let ocrCacheKey {
+          ocrCache.insert(ocrResult, for: ocrCacheKey)
+        }
+      } catch {
+        Log.ocr.error("ocr failed: \(error.localizedDescription, privacy: .public)")
+        return
+      }
     }
 
     switch evaluateSecretSurfaces(context: ctx, ocrText: ocrResult.text) {

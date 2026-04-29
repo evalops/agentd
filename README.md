@@ -58,6 +58,9 @@ local inspection of the shipped arm64 `codex_chronicle` helper bundled with
   frame is batched.
 - OCR text is scrubbed at full length, then capped to `maxOcrTextChars`
   (default 4096) with `ocrTextTruncated` set when the cap applies.
+- A bounded OCR result cache reuses Vision output for unchanged window/content
+  observations while still running SecretScrubber on every frame before
+  persistence.
 - Batches every 30s or 24 frames, whichever first.
 - Local-only mode persists batches under `~/.evalops/agentd/batches/` as
   `0o600` JSON by default and sweeps old or over-budget batches; HTTP mode
@@ -254,8 +257,8 @@ encrypted `.agentdbatch` batches.
 
 Diagnostics reports are written under `~/.evalops/agentd/diagnostics/` with
 `0o600` permissions. They summarize permissions, policy, queue pressure, local
-batches, active display frame/drop counters, and last submit health without OCR
-text or raw payloads. The same binary also supports `list-displays`,
+batches, OCR cache hit-rate counters, active display frame/drop counters, and
+last submit health without OCR text or raw payloads. The same binary also supports `list-displays`,
 `capture-once`, and `selftest` diagnostic subcommands; see
 `docs/diagnostics.md`.
 
