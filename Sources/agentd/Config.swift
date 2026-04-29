@@ -65,6 +65,8 @@ struct AgentConfig: Codable, Sendable {
   var deniedBundleIds: [String]
   var deniedPathPrefixes: [String]
   var pauseWindowTitlePatterns: [String]
+  var captureAllDisplays: Bool
+  var selectedDisplayIds: [UInt32]
   var captureFps: Double
   var idleFps: Double
   var batchIntervalSeconds: Double
@@ -96,6 +98,8 @@ struct AgentConfig: Codable, Sendable {
     case deniedBundleIds
     case deniedPathPrefixes
     case pauseWindowTitlePatterns
+    case captureAllDisplays
+    case selectedDisplayIds
     case captureFps
     case idleFps
     case batchIntervalSeconds
@@ -127,6 +131,8 @@ struct AgentConfig: Codable, Sendable {
     deniedBundleIds: [String],
     deniedPathPrefixes: [String],
     pauseWindowTitlePatterns: [String],
+    captureAllDisplays: Bool = false,
+    selectedDisplayIds: [UInt32] = [],
     captureFps: Double,
     idleFps: Double,
     batchIntervalSeconds: Double,
@@ -156,6 +162,8 @@ struct AgentConfig: Codable, Sendable {
     self.deniedBundleIds = deniedBundleIds
     self.deniedPathPrefixes = deniedPathPrefixes
     self.pauseWindowTitlePatterns = pauseWindowTitlePatterns
+    self.captureAllDisplays = captureAllDisplays
+    self.selectedDisplayIds = selectedDisplayIds
     self.captureFps = captureFps
     self.idleFps = idleFps
     self.batchIntervalSeconds = batchIntervalSeconds
@@ -196,6 +204,13 @@ struct AgentConfig: Codable, Sendable {
       currentValues: pauseWindowTitlePatterns,
       policyValues: policy.pauseWindowTitlePatterns
     )
+
+    if policy.captureAllDisplays != nil {
+      next.captureAllDisplays = policy.captureAllDisplays == true
+    }
+    if let selectedDisplayIds = policy.selectedDisplayIds {
+      next.selectedDisplayIds = selectedDisplayIds
+    }
 
     if policy.minBatchIntervalSeconds > 0 {
       next.batchIntervalSeconds = max(batchIntervalSeconds, Double(policy.minBatchIntervalSeconds))
@@ -249,6 +264,10 @@ struct AgentConfig: Codable, Sendable {
     pauseWindowTitlePatterns =
       try container.decodeIfPresent([String].self, forKey: .pauseWindowTitlePatterns)
       ?? Self.defaultPauseWindowPatterns
+    captureAllDisplays =
+      try container.decodeIfPresent(Bool.self, forKey: .captureAllDisplays) ?? false
+    selectedDisplayIds =
+      try container.decodeIfPresent([UInt32].self, forKey: .selectedDisplayIds) ?? []
     captureFps = try container.decodeIfPresent(Double.self, forKey: .captureFps) ?? 1.0
     idleFps = try container.decodeIfPresent(Double.self, forKey: .idleFps) ?? 0.2
     batchIntervalSeconds =
@@ -292,6 +311,10 @@ struct AgentConfig: Codable, Sendable {
     try container.encode(deniedBundleIds, forKey: .deniedBundleIds)
     try container.encode(deniedPathPrefixes, forKey: .deniedPathPrefixes)
     try container.encode(pauseWindowTitlePatterns, forKey: .pauseWindowTitlePatterns)
+    try container.encode(captureAllDisplays, forKey: .captureAllDisplays)
+    if !selectedDisplayIds.isEmpty {
+      try container.encode(selectedDisplayIds, forKey: .selectedDisplayIds)
+    }
     try container.encode(captureFps, forKey: .captureFps)
     try container.encode(idleFps, forKey: .idleFps)
     try container.encode(batchIntervalSeconds, forKey: .batchIntervalSeconds)
@@ -356,6 +379,8 @@ struct AgentConfig: Codable, Sendable {
       deniedBundleIds: defaultDeniedBundleIds,
       deniedPathPrefixes: defaultDeniedPathPrefixes,
       pauseWindowTitlePatterns: defaultPauseWindowPatterns,
+      captureAllDisplays: false,
+      selectedDisplayIds: [],
       captureFps: 1.0,
       idleFps: 0.2,
       batchIntervalSeconds: 30,

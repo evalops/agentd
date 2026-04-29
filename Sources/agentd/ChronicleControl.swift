@@ -30,6 +30,8 @@ struct CapturePolicy: Sendable, Codable, Equatable {
   var pauseWindowTitlePatterns: [String]
   var secretPatterns: [String]
   var cloudConsolidationTier: String
+  var captureAllDisplays: Bool?
+  var selectedDisplayIds: [UInt32]?
   var minBatchIntervalSeconds: Int
   var maxFramesPerBatch: Int
   var scheduledPauseWindows: [ScheduledPauseWindow]
@@ -44,6 +46,8 @@ struct CapturePolicy: Sendable, Codable, Equatable {
     pauseWindowTitlePatterns: [String] = [],
     secretPatterns: [String] = [],
     cloudConsolidationTier: String = "",
+    captureAllDisplays: Bool? = nil,
+    selectedDisplayIds: [UInt32]? = nil,
     minBatchIntervalSeconds: Int = 0,
     maxFramesPerBatch: Int = 0,
     scheduledPauseWindows: [ScheduledPauseWindow] = [],
@@ -57,6 +61,8 @@ struct CapturePolicy: Sendable, Codable, Equatable {
     self.pauseWindowTitlePatterns = pauseWindowTitlePatterns
     self.secretPatterns = secretPatterns
     self.cloudConsolidationTier = cloudConsolidationTier
+    self.captureAllDisplays = captureAllDisplays
+    self.selectedDisplayIds = selectedDisplayIds
     self.minBatchIntervalSeconds = minBatchIntervalSeconds
     self.maxFramesPerBatch = maxFramesPerBatch
     self.scheduledPauseWindows = scheduledPauseWindows
@@ -72,6 +78,8 @@ struct CapturePolicy: Sendable, Codable, Equatable {
     case pauseWindowTitlePatterns
     case secretPatterns
     case cloudConsolidationTier
+    case captureAllDisplays
+    case selectedDisplayIds
     case minBatchIntervalSeconds
     case maxFramesPerBatch
     case scheduledPauseWindows
@@ -99,6 +107,8 @@ struct CapturePolicy: Sendable, Codable, Equatable {
         String.self,
         forKey: .cloudConsolidationTier
       ) ?? "",
+      captureAllDisplays: try container.decodeIfPresent(Bool.self, forKey: .captureAllDisplays),
+      selectedDisplayIds: try container.decodeIfPresent([UInt32].self, forKey: .selectedDisplayIds),
       minBatchIntervalSeconds: try container.decodeIfPresent(
         Int.self,
         forKey: .minBatchIntervalSeconds

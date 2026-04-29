@@ -9,10 +9,10 @@ This is the desktop component of the work tracked in
 
 ## What it does
 
-- Captures the active display via `ScreenCaptureKit` at an adaptive 0.2–1 fps;
-  input idle time drops cadence to `idleFps` and activity restores
-  `captureFps`. Frames include display id, scale, and main-display metadata for
-  multi-display diagnostics.
+- Captures one display by default, or all/selected displays via
+  `ScreenCaptureKit` when configured, at an adaptive 0.2–1 fps; input idle time
+  drops cadence to `idleFps` and activity restores `captureFps`. Frames include
+  display id, scale, and main-display metadata for multi-display diagnostics.
 - Reads `(bundleId, windowTitle, documentPath)` per frame via the Accessibility
   API and `NSWorkspace`.
 - Runs Apple Vision OCR on-device.
@@ -59,11 +59,13 @@ swift test
 python3 scripts/mock_chronicle.py --self-test Tests/Fixtures/chronicle
 scripts/package_app.sh # release .app bundle with hardened runtime signing
 scripts/permission_smoke.sh --no-launch # generate permission-smoke evidence template
+./script/build_and_run.sh --verify # package, launch, and verify the menu app process
 ```
 
 First run will trigger the system Screen Recording and Accessibility prompts the
 first time the gated APIs are called. Grant both in System Settings → Privacy &
-Security and relaunch.
+Security. If capture starts before the grants are complete, agentd retries
+capture startup in the background so a full relaunch is not required.
 
 `scripts/package_app.sh` creates `dist/EvalOps agentd.app` and
 `dist/agentd.zip`. By default CI uses ad-hoc signing with hardened runtime so
@@ -103,6 +105,8 @@ agentd reads and writes `~/.evalops/agentd/config.json`. Important defaults:
 - `captureFps: 1.0`
 - `idleFps: 0.2`
 - `idleThresholdSeconds: 60`
+- `captureAllDisplays: false`
+- `selectedDisplayIds: []`
 - `adaptiveOcrMinChars: 1024`
 - `adaptiveOcrBackpressureThreshold: 8`
 - `adaptiveOcrBacklogBytes: 67108864`
@@ -188,7 +192,8 @@ Secret Broker mode, and local permission preflight metadata. Every 30 seconds it
 calls `Heartbeat` with pending in-memory frames plus local fallback batch count
 and bytes. `RegisterDevice` and `Heartbeat` responses may include a
 `CapturePolicy`; agentd applies allowlist, denylist, path-deny, pause-window,
-scheduled pause windows, batch interval, and max-frame settings at runtime.
+scheduled pause windows, selected-display scope, batch interval, and max-frame
+settings at runtime.
 Server `PAUSED` capture mode stops capture until a later policy resumes it.
 Manual user pause wins over scheduled pause, and scheduled pause wins over
 server policy pause for visible menu/diagnostic state.
@@ -201,7 +206,8 @@ encrypted `.agentdbatch` batches.
 
 Diagnostics reports are written under `~/.evalops/agentd/diagnostics/` with
 `0o600` permissions. They summarize permissions, policy, queue pressure, local
-batches, and last submit health without OCR text or raw payloads.
+batches, active display frame/drop counters, and last submit health without OCR
+text or raw payloads.
 
 `scripts/mock_chronicle.py` provides a strict local mock Chronicle and Secret
 Broker harness. CI validates the golden fixtures in `Tests/Fixtures/chronicle`

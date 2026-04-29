@@ -15,85 +15,156 @@ struct CapturedFrame: Sendable {
   let mainDisplay: Bool
 }
 
+struct CaptureDisplayStats: Sendable, Equatable {
+  let displayId: UInt32
+  let widthPx: Int
+  let heightPx: Int
+  let displayScale: Double?
+  let mainDisplay: Bool
+  let framesEnqueued: Int
+  let framesDropped: Int
+  let lastFrameAt: Date?
+}
+
+enum DisplaySelection {
+  static func selectedDisplayIds(
+    available: [UInt32],
+    captureAllDisplays: Bool,
+    selectedDisplayIds: [UInt32]
+  ) -> [UInt32] {
+    guard !available.isEmpty else { return [] }
+    let allowed = Set(available)
+    let explicit = selectedDisplayIds.filter { allowed.contains($0) }
+    if !explicit.isEmpty {
+      return Array(dictOrdered: explicit)
+    }
+    if captureAllDisplays {
+      return available
+    }
+    return [available[0]]
+  }
+}
+
 actor CaptureService: NSObject {
-  private var stream: SCStream?
-  private var output: FrameOutput?
-  private var streamConfiguration: SCStreamConfiguration?
+  private var captures: [CGDirectDisplayID: DisplayCapture] = [:]
   private let onFrame: @Sendable (CapturedFrame) async -> Void
-  private let onFrameDropped: @Sendable () async -> Void
+  private let onFrameDropped: @Sendable (CGDirectDisplayID) async -> Void
   private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
   init(
     onFrame: @escaping @Sendable (CapturedFrame) async -> Void,
-    onFrameDropped: @escaping @Sendable () async -> Void = {}
+    onFrameDropped: @escaping @Sendable (CGDirectDisplayID) async -> Void = { _ in }
   ) {
     self.onFrame = onFrame
     self.onFrameDropped = onFrameDropped
   }
 
-  func start(targetFps: Double) async throws {
+  func start(
+    targetFps: Double,
+    captureAllDisplays: Bool = false,
+    selectedDisplayIds: [UInt32] = []
+  ) async throws {
     let content = try await SCShareableContent.excludingDesktopWindows(
       true, onScreenWindowsOnly: true
     )
-    guard let display = content.displays.first else {
+    guard !content.displays.isEmpty else {
       throw NSError(domain: "agentd", code: 1, userInfo: [NSLocalizedDescriptionKey: "no display"])
     }
+    let availableIds = content.displays.map(\.displayID)
+    let targetIds = Set(
+      DisplaySelection.selectedDisplayIds(
+        available: availableIds,
+        captureAllDisplays: captureAllDisplays,
+        selectedDisplayIds: selectedDisplayIds
+      ))
+    let displays = content.displays.filter { targetIds.contains($0.displayID) }
 
     // Filter excludes our own menu-bar app from its own captures.
     let myPID = ProcessInfo.processInfo.processIdentifier
     let excluded = content.applications.filter { $0.processID == myPID }
-    let filter = SCContentFilter(
-      display: display, excludingApplications: excluded, exceptingWindows: [])
 
-    let cfg = SCStreamConfiguration()
-    cfg.width = Int(display.width)
-    cfg.height = Int(display.height)
-    cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(max(1, Int32(targetFps))))
-    cfg.queueDepth = 5
-    cfg.showsCursor = true
-    cfg.pixelFormat = kCVPixelFormatType_32BGRA
+    var nextCaptures: [CGDirectDisplayID: DisplayCapture] = [:]
+    do {
+      for display in displays {
+        let filter = SCContentFilter(
+          display: display, excludingApplications: excluded, exceptingWindows: [])
+        let cfg = Self.streamConfiguration(display: display, targetFps: targetFps)
+        let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
+        let output = FrameOutput(
+          ciContext: ciContext,
+          displayId: display.displayID,
+          widthPx: Int(display.width),
+          heightPx: Int(display.height),
+          displayScale: Self.displayScale(display.displayID),
+          mainDisplay: display.displayID == CGMainDisplayID(),
+          onFrame: onFrame,
+          onFrameDropped: onFrameDropped
+        )
+        try stream.addStreamOutput(
+          output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
+        try await stream.startCapture()
+        nextCaptures[display.displayID] = DisplayCapture(
+          stream: stream,
+          output: output,
+          configuration: cfg
+        )
+      }
+    } catch {
+      for capture in nextCaptures.values {
+        try? await capture.stream.stopCapture()
+      }
+      throw error
+    }
 
-    let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
-    let output = FrameOutput(
-      ciContext: ciContext,
-      displayId: display.displayID,
-      displayScale: Self.displayScale(display.displayID),
-      mainDisplay: display.displayID == CGMainDisplayID(),
-      onFrame: onFrame,
-      onFrameDropped: onFrameDropped
-    )
-    try stream.addStreamOutput(
-      output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
-    try await stream.startCapture()
-
-    self.stream = stream
-    self.output = output
-    self.streamConfiguration = cfg
+    captures = nextCaptures
     Log.capture.info(
-      "capture started fps=\(targetFps, privacy: .public) display=\(display.displayID, privacy: .public)"
+      "capture started fps=\(targetFps, privacy: .public) displays=\(nextCaptures.keys.map(String.init).joined(separator: ","), privacy: .public)"
     )
   }
 
   func stop() async {
-    if let stream {
-      try? await stream.stopCapture()
+    for capture in captures.values {
+      try? await capture.stream.stopCapture()
     }
-    stream = nil
-    output = nil
-    streamConfiguration = nil
+    captures.removeAll()
     Log.capture.info("capture stopped")
   }
 
   func updateFps(_ fps: Double) async {
-    guard let stream, let cfg = streamConfiguration else { return }
-    cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(max(1, Int32(fps))))
-    do {
-      try await stream.updateConfiguration(cfg)
-      Log.capture.info("capture fps updated=\(fps, privacy: .public)")
-    } catch {
-      Log.capture.error(
-        "capture fps update failed: \(error.localizedDescription, privacy: .public)")
+    guard !captures.isEmpty else { return }
+    for (displayId, capture) in captures {
+      capture.configuration.minimumFrameInterval = Self.frameInterval(fps)
+      do {
+        try await capture.stream.updateConfiguration(capture.configuration)
+      } catch {
+        Log.capture.error(
+          "capture fps update failed display=\(displayId, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+        )
+      }
     }
+    Log.capture.info("capture fps updated=\(fps, privacy: .public)")
+  }
+
+  func displayStats() -> [CaptureDisplayStats] {
+    captures.values.map { $0.output.stats() }.sorted { $0.displayId < $1.displayId }
+  }
+
+  private static func streamConfiguration(
+    display: SCDisplay,
+    targetFps: Double
+  ) -> SCStreamConfiguration {
+    let cfg = SCStreamConfiguration()
+    cfg.width = Int(display.width)
+    cfg.height = Int(display.height)
+    cfg.minimumFrameInterval = frameInterval(targetFps)
+    cfg.queueDepth = 5
+    cfg.showsCursor = true
+    cfg.pixelFormat = kCVPixelFormatType_32BGRA
+    return cfg
+  }
+
+  private static func frameInterval(_ fps: Double) -> CMTime {
+    CMTime(value: 1, timescale: CMTimeScale(max(1, Int32(fps))))
   }
 
   private static func displayScale(_ displayId: CGDirectDisplayID) -> Double? {
@@ -105,26 +176,45 @@ actor CaptureService: NSObject {
   }
 }
 
+private struct DisplayCapture {
+  let stream: SCStream
+  let output: FrameOutput
+  let configuration: SCStreamConfiguration
+}
+
 private final class FrameOutput: NSObject, SCStreamOutput, @unchecked Sendable {
   let ciContext: CIContext
   let displayId: CGDirectDisplayID
+  let widthPx: Int
+  let heightPx: Int
   let displayScale: Double?
   let mainDisplay: Bool
   let dispatcher: BufferedFrameDispatcher
+  private let statsLock = NSLock()
+  private var framesEnqueued = 0
+  private var framesDropped = 0
+  private var lastFrameAt: Date?
 
   init(
     ciContext: CIContext,
     displayId: CGDirectDisplayID,
+    widthPx: Int,
+    heightPx: Int,
     displayScale: Double?,
     mainDisplay: Bool,
     onFrame: @escaping @Sendable (CapturedFrame) async -> Void,
-    onFrameDropped: @escaping @Sendable () async -> Void
+    onFrameDropped: @escaping @Sendable (CGDirectDisplayID) async -> Void
   ) {
     self.ciContext = ciContext
     self.displayId = displayId
+    self.widthPx = widthPx
+    self.heightPx = heightPx
     self.displayScale = displayScale
     self.mainDisplay = mainDisplay
-    self.dispatcher = BufferedFrameDispatcher(onFrame: onFrame, onDropped: onFrameDropped)
+    self.dispatcher = BufferedFrameDispatcher(
+      onFrame: onFrame,
+      onDropped: { await onFrameDropped(displayId) }
+    )
   }
 
   func stream(
@@ -143,7 +233,39 @@ private final class FrameOutput: NSObject, SCStreamOutput, @unchecked Sendable {
       displayScale: displayScale,
       mainDisplay: mainDisplay
     )
-    dispatcher.yield(frame)
+    if dispatcher.yield(frame) {
+      recordEnqueued(at: frame.timestamp)
+    } else {
+      recordDropped()
+    }
+  }
+
+  func stats() -> CaptureDisplayStats {
+    statsLock.lock()
+    defer { statsLock.unlock() }
+    return CaptureDisplayStats(
+      displayId: displayId,
+      widthPx: widthPx,
+      heightPx: heightPx,
+      displayScale: displayScale,
+      mainDisplay: mainDisplay,
+      framesEnqueued: framesEnqueued,
+      framesDropped: framesDropped,
+      lastFrameAt: lastFrameAt
+    )
+  }
+
+  private func recordEnqueued(at date: Date) {
+    statsLock.lock()
+    framesEnqueued += 1
+    lastFrameAt = date
+    statsLock.unlock()
+  }
+
+  private func recordDropped() {
+    statsLock.lock()
+    framesDropped += 1
+    statsLock.unlock()
   }
 }
 
@@ -171,14 +293,16 @@ final class BufferedFrameDispatcher: @unchecked Sendable {
     }
   }
 
-  func yield(_ frame: CapturedFrame) {
+  @discardableResult
+  func yield(_ frame: CapturedFrame) -> Bool {
     switch continuation.yield(frame) {
     case .dropped:
       Task { await onDropped() }
+      return false
     case .enqueued, .terminated:
-      break
+      return true
     @unknown default:
-      break
+      return true
     }
   }
 
@@ -189,5 +313,12 @@ final class BufferedFrameDispatcher: @unchecked Sendable {
 
   deinit {
     finish()
+  }
+}
+
+extension Array where Element: Hashable {
+  init(dictOrdered values: [Element]) {
+    var seen = Set<Element>()
+    self = values.filter { seen.insert($0).inserted }
   }
 }

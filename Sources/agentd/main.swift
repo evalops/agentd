@@ -21,6 +21,7 @@ final class AppController {
   private var idleTimer: Timer?
   private var heartbeatTimer: Timer?
   private var pauseWindowTimer: Timer?
+  private var captureRetryTimer: Timer?
   private var idleMode = false
 
   init() {
@@ -87,7 +88,7 @@ final class AppController {
     capture = CaptureService { [pipeline] frame in
       let ctx = await MainActor.run { WindowContextProbe.current() }
       await pipeline.consume(frame, context: ctx)
-    } onFrameDropped: { [pipeline] in
+    } onFrameDropped: { [pipeline] _ in
       await pipeline.recordBackpressureDrop()
     }
 
@@ -226,6 +227,8 @@ final class AppController {
       appVersion: Bundle.main.appVersion,
       metadata: [
         "capture_state": captureRunning ? "capturing" : "stopped",
+        "capture_all_displays": String(config.captureAllDisplays),
+        "selected_display_ids": config.selectedDisplayIds.map(String.init).joined(separator: ","),
         "local_only": String(config.localOnly),
         "secret_broker_enabled": String(config.secretBroker != nil),
         "accessibility_trusted": String(permissions.accessibilityTrusted),
@@ -274,10 +277,18 @@ final class AppController {
 
     let next = policyBaseConfig.applying(policy: policy)
     let intervalChanged = next.batchIntervalSeconds != config.batchIntervalSeconds
+    let captureScopeChanged =
+      next.captureAllDisplays != config.captureAllDisplays
+      || next.selectedDisplayIds != config.selectedDisplayIds
     config = next
     await pipeline.updateConfig(next)
     if intervalChanged {
       scheduleFlushTimer()
+    }
+    if captureRunning, captureScopeChanged {
+      await capture.stop()
+      captureRunning = false
+      idleMode = false
     }
     if captureRunning {
       await capture.updateFps(idleMode ? config.idleFps : config.captureFps)
@@ -289,20 +300,40 @@ final class AppController {
     let pauseState = effectivePauseState()
     let shouldPause = pauseState.paused
     if shouldPause, captureRunning {
+      captureRetryTimer?.invalidate()
+      captureRetryTimer = nil
       await capture.stop()
       captureRunning = false
       idleMode = false
     } else if !shouldPause, !captureRunning {
       do {
-        try await capture.start(targetFps: config.captureFps)
+        try await capture.start(
+          targetFps: config.captureFps,
+          captureAllDisplays: config.captureAllDisplays,
+          selectedDisplayIds: config.selectedDisplayIds
+        )
         captureRunning = true
+        captureRetryTimer?.invalidate()
+        captureRetryTimer = nil
       } catch {
         controlState.lastError = error.localizedDescription
         Log.app.error("capture start failed: \(error.localizedDescription, privacy: .public)")
+        scheduleCaptureRetry()
       }
     }
     schedulePauseWindowTimer()
     updateMenuStatus()
+  }
+
+  private func scheduleCaptureRetry() {
+    guard captureRetryTimer == nil else { return }
+    captureRetryTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: false) {
+      [weak self] _ in
+      Task { @MainActor in
+        self?.captureRetryTimer = nil
+        await self?.reconcileCaptureState()
+      }
+    }
   }
 
   private func effectivePauseState(now: Date = Date()) -> EffectivePauseState {
@@ -339,6 +370,7 @@ final class AppController {
     let localStats = await submitter.localBatchStats()
     let localBatches = await submitter.localBatchSummaries()
     let lastSubmitResult = await submitter.lastSubmitResult()
+    let captureDisplayStats = await capture.displayStats()
     let snapshot = DiagnosticsSnapshot(
       generatedAt: Date(),
       appVersion: Bundle.main.appVersion,
@@ -351,6 +383,7 @@ final class AppController {
       pendingStats: pending,
       localBatchStats: localStats,
       localBatches: localBatches,
+      captureDisplayStats: captureDisplayStats,
       lastSubmitResult: lastSubmitResult
     )
     do {
