@@ -54,7 +54,6 @@ final class PermissionSetupWindowController: NSWindowController {
 
   private func makeContentView() -> NSView {
     let root = NSView()
-    root.translatesAutoresizingMaskIntoConstraints = false
 
     let title = NSTextField(labelWithString: "Permission Setup")
     title.font = .systemFont(ofSize: 17, weight: .semibold)
