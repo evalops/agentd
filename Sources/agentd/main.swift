@@ -10,6 +10,7 @@ final class AppController {
   private let pipeline: FramePipeline
   private let submitter: Submitter
   private let controlClient: ChronicleControlClient?
+  private var runtimeLock: AgentdRuntimeLock?
   private var capture: CaptureService!
   private var menuBar: MenuBarController!
   private var userPaused = false
@@ -79,6 +80,16 @@ final class AppController {
   }
 
   func boot() async {
+    do {
+      runtimeLock = try AgentdRuntimeLock.acquire(purpose: "daemon")
+    } catch {
+      controlState.lastError = error.localizedDescription
+      Log.app.fault(
+        "agentd runtime lock unavailable: \(error.localizedDescription, privacy: .public)")
+      NSApp.terminate(nil)
+      return
+    }
+
     let permissions = PermissionSnapshot.current(promptForAccessibility: true)
     if !permissions.accessibilityTrusted {
       Log.app.warning("Accessibility not granted yet — window-context will be empty until granted")
@@ -436,7 +447,7 @@ final class AppController {
   }
 }
 
-struct PermissionSnapshot: Sendable, Equatable {
+struct PermissionSnapshot: Sendable, Equatable, Codable {
   let accessibilityTrusted: Bool
   let screenCaptureTrusted: Bool
 
@@ -460,6 +471,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     controller = c
     Task { await c.boot() }
   }
+}
+
+if DiagnosticCLI.shouldHandle(CommandLine.arguments) {
+  let code = await DiagnosticCLI.run(arguments: CommandLine.arguments)
+  exit(code)
 }
 
 // Status-bar-only app — no Dock icon, no main window.
