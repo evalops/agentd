@@ -3,19 +3,25 @@
 import Darwin
 import Foundation
 
-struct CaptureWorkerProcessSpec: Sendable, Equatable {
+struct CaptureWorkerProcessSpec {
   let executableURL: URL
   let arguments: [String]
   let environment: [String: String]?
+  let standardOutput: Pipe?
+  let standardError: Pipe?
 
   init(
     executableURL: URL,
     arguments: [String] = [],
-    environment: [String: String]? = nil
+    environment: [String: String]? = nil,
+    standardOutput: Pipe? = nil,
+    standardError: Pipe? = nil
   ) {
     self.executableURL = executableURL
     self.arguments = arguments
     self.environment = environment
+    self.standardOutput = standardOutput
+    self.standardError = standardError
   }
 }
 
@@ -71,6 +77,12 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
     process.executableURL = spec.executableURL
     process.arguments = spec.arguments
     process.environment = spec.environment
+    if let standardOutput = spec.standardOutput {
+      process.standardOutput = standardOutput
+    }
+    if let standardError = spec.standardError {
+      process.standardError = standardError
+    }
 
     return try lock.withLock {
       if let current = self.process, current.isRunning {
@@ -124,6 +136,25 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
     return recordTermination(process: target, pid: pid, killSent: true, exited: exitedAfterKill)
   }
 
+  func waitForExit(timeoutSeconds: TimeInterval) -> CaptureWorkerTerminationResult? {
+    guard let target = lock.withLock({ self.process }) else { return nil }
+    let pid = target.processIdentifier
+    let exited = Self.wait(for: target, timeoutSeconds: max(0, timeoutSeconds))
+    guard exited else { return nil }
+    lock.withLock {
+      if self.process === target {
+        self.process = nil
+      }
+    }
+    return recordTermination(
+      process: target,
+      pid: pid,
+      termSent: false,
+      killSent: false,
+      exited: true
+    )
+  }
+
   func stats() -> CaptureWorkerSupervisorStats {
     lock.withLock {
       CaptureWorkerSupervisorStats(
@@ -139,6 +170,7 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
   private func recordTermination(
     process: Process,
     pid: Int32,
+    termSent: Bool = true,
     killSent: Bool,
     exited: Bool
   ) -> CaptureWorkerTerminationResult {
@@ -153,7 +185,7 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
     }
     return CaptureWorkerTerminationResult(
       pid: pid,
-      termSent: true,
+      termSent: termSent,
       killSent: killSent,
       exited: exited,
       terminationStatus: status

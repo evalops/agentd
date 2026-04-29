@@ -57,6 +57,11 @@ writes a redacted batch JSON object to stdout or an `0o600` `--out` path. It
 refuses to run while another agentd daemon or diagnostic capture holds the
 runtime lock, which avoids ScreenCaptureKit contention during support sessions.
 
-`--no-ocr` keeps the capture and scrubber path intact but records an empty OCR
-result. `--no-scrub` is recognized for operator muscle memory but deliberately
-refused; local diagnostics should not bypass the scrubber.
+`capture-once` launches a same-binary `capture-worker-once` subprocess for the
+ScreenCaptureKit one-shot and decodes the worker's frame payload in the parent
+before policy, scrubber, OCR, and batch generation run. This exercises the
+out-of-process capture boundary used by the larger worker-supervision roadmap
+while keeping privacy decisions in the parent process. `--no-ocr` keeps the
+capture and scrubber path intact but records an empty OCR result. `--no-scrub`
+is recognized for operator muscle memory but deliberately refused; local
+diagnostics should not bypass the scrubber.
