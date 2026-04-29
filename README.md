@@ -147,7 +147,10 @@ allowed app to probe a different foreground surface.
 `scripts/package_app.sh` creates `dist/EvalOps agentd.app` and
 `dist/agentd.zip`. By default CI uses ad-hoc signing with hardened runtime so
 the bundle shape, embedded Sparkle framework, and entitlements are continuously
-checked. Release builds inject `AGENTD_SPARKLE_FEED_URL` and
+checked. Ad-hoc packages add `disable-library-validation` only for the local
+signature so the embedded Sparkle framework can load; set
+`AGENTD_ADHOC_DISABLE_LIBRARY_VALIDATION=0` to test without that local escape
+hatch. Release builds inject `AGENTD_SPARKLE_FEED_URL` and
 `AGENTD_SPARKLE_PUBLIC_ED_KEY` so the menu bar's "Check for Updates..." action
 can use Sparkle. When `AGENTD_SPARKLE_DOWNLOAD_URL` is set, the package script
 signs the final zip with Sparkle EdDSA, writes `dist/appcast.xml`, and verifies
