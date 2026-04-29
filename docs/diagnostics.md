@@ -45,12 +45,16 @@ agentd selftest
 ```
 
 `list-displays` reports display id, bounds, scale, main-display status, and the
-current Accessibility/Screen Recording preflight state. `capture-once` captures
-a single frame, runs the normal privacy filters, SecretScrubber, and OCR
-pipeline, then writes a redacted batch JSON object to stdout or an `0o600`
-`--out` path. It refuses to run while another agentd daemon or diagnostic
-capture holds the runtime lock, which avoids ScreenCaptureKit contention during
-support sessions.
+current Accessibility/Screen Recording preflight state. Display discovery uses
+CoreGraphics/NSScreen metadata instead of ScreenCaptureKit so developers can
+inspect local display ids even when capture permission plumbing is unhealthy.
+The JSON includes `displayProbe` and `screenCaptureProbe` status objects; if a
+probe times out or degrades, the command exits with structured `timedOut` /
+`unavailableReason` fields instead of hanging. `capture-once` captures a single
+frame, runs the normal privacy filters, SecretScrubber, and OCR pipeline, then
+writes a redacted batch JSON object to stdout or an `0o600` `--out` path. It
+refuses to run while another agentd daemon or diagnostic capture holds the
+runtime lock, which avoids ScreenCaptureKit contention during support sessions.
 
 `--no-ocr` keeps the capture and scrubber path intact but records an empty OCR
 result. `--no-scrub` is recognized for operator muscle memory but deliberately
