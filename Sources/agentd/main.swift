@@ -171,6 +171,9 @@ final class AppController {
           )
         }
       },
+      updateStatusProvider: {
+        softwareUpdater.menuPresentation
+      },
       configureUpdatesMenuItem: { menuItem in
         softwareUpdater.configure(menuItem: menuItem)
       },

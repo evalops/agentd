@@ -18,6 +18,7 @@ final class MenuBarControllerTests: XCTestCase {
     XCTAssertEqual(presentation.title, "EvalOps agentd needs permissions")
     XCTAssertEqual(presentation.statusLine, "Status: capturing")
     XCTAssertEqual(presentation.aboutLine, "agentd 1.2.3 — local-only")
+    XCTAssertEqual(presentation.badgeText, "Setup")
     XCTAssertEqual(presentation.symbolName, "exclamationmark.triangle.fill")
   }
 
@@ -36,6 +37,21 @@ final class MenuBarControllerTests: XCTestCase {
     XCTAssertEqual(presentation.statusLine, "Status: scheduled pause")
     XCTAssertEqual(presentation.permissionsLine, "Permissions: Ready")
     XCTAssertEqual(presentation.aboutLine, "agentd 1.2.3 — managed policy 42")
+    XCTAssertEqual(presentation.badgeText, "Paused")
     XCTAssertEqual(presentation.symbolName, "pause.circle")
+  }
+
+  func testMenuPresentationShowsCapturingBadge() {
+    let presentation = MenuStatusPresentation(
+      paused: false,
+      detail: "capturing, registered",
+      permissions: PermissionSnapshot(accessibilityTrusted: true, screenCaptureTrusted: true),
+      localOnly: false,
+      policyVersion: nil,
+      appVersion: "1.2.3"
+    )
+
+    XCTAssertEqual(presentation.badgeText, "Capturing")
+    XCTAssertEqual(presentation.symbolName, "circle.fill")
   }
 }

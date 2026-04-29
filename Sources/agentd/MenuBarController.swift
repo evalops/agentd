@@ -31,6 +31,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
   private let onOpenAccessibilitySettings: @Sendable () -> Void
   private let onRelaunch: @Sendable () -> Void
   private let onLaunchAtLoginToggle: @Sendable (Bool) -> Void
+  private let updateStatusProvider: @MainActor () -> SparkleUpdateMenuPresentation
   private let configureUpdatesMenuItem: @MainActor (NSMenuItem) -> Void
   private let onQuit: @Sendable () -> Void
 
@@ -46,6 +47,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     onOpenAccessibilitySettings: @escaping @Sendable () -> Void,
     onRelaunch: @escaping @Sendable () -> Void,
     onLaunchAtLoginToggle: @escaping @Sendable (Bool) -> Void,
+    updateStatusProvider: @escaping @MainActor () -> SparkleUpdateMenuPresentation,
     configureUpdatesMenuItem: @escaping @MainActor (NSMenuItem) -> Void,
     onQuit: @escaping @Sendable () -> Void
   ) {
@@ -60,6 +62,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     self.onOpenAccessibilitySettings = onOpenAccessibilitySettings
     self.onRelaunch = onRelaunch
     self.onLaunchAtLoginToggle = onLaunchAtLoginToggle
+    self.updateStatusProvider = updateStatusProvider
     self.configureUpdatesMenuItem = configureUpdatesMenuItem
     self.onQuit = onQuit
     self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -113,14 +116,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     addSectionTitle("Data")
 
     let revealItem = makeItem(
-      title: "Reveal Batches in Finder",
+      title: "Reveal Batches",
       symbolName: "folder",
       action: #selector(reveal)
     )
     menu.addItem(revealItem)
 
     let diagnosticsItem = makeItem(
-      title: "Open Diagnostics Report",
+      title: "Diagnostics Report",
       symbolName: "stethoscope",
       action: #selector(openDiagnostics),
       keyEquivalent: "d"
@@ -145,7 +148,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     menu.addItem(permissionItem)
 
     let refreshPermissionsItem = makeItem(
-      title: "Check Permission Status",
+      title: "Refresh Permissions",
       symbolName: "arrow.clockwise",
       action: #selector(refreshPermissions)
     )
@@ -153,7 +156,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     menu.addItem(refreshPermissionsItem)
 
     let permissionSetupItem = makeItem(
-      title: "Open Permission Setup",
+      title: "Permission Setup",
       symbolName: "lock.shield",
       action: #selector(openPermissionSetup)
     )
@@ -161,7 +164,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     menu.addItem(permissionSetupItem)
 
     let screenRecordingItem = makeItem(
-      title: "Open Screen & System Audio Recording Settings",
+      title: "Screen Recording Settings",
       symbolName: "record.circle",
       action: #selector(openScreenRecordingSettings)
     )
@@ -169,7 +172,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     menu.addItem(screenRecordingItem)
 
     let accessibilityItem = makeItem(
-      title: "Open Accessibility Settings",
+      title: "Accessibility Settings",
       symbolName: "figure.wave",
       action: #selector(openAccessibilitySettings)
     )
@@ -197,7 +200,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     menu.addItem(checkForUpdatesItem)
 
     let relaunchItem = makeItem(
-      title: "Relaunch agentd",
+      title: "Relaunch",
       symbolName: "arrow.trianglehead.clockwise",
       action: #selector(relaunch)
     )
@@ -281,20 +284,20 @@ final class MenuBarController: NSObject, NSMenuDelegate {
       permissions.allTrusted ? "checkmark.shield" : "lock.shield")
     screenRecordingItem?.title =
       permissions.screenCaptureTrusted
-      ? "Screen & System Audio Recording Granted"
-      : "Open Screen & System Audio Recording Settings"
+      ? "Screen Recording Granted"
+      : "Screen Recording Settings"
     screenRecordingItem?.image = menuSymbol(
       permissions.screenCaptureTrusted ? "checkmark.circle" : "record.circle")
     screenRecordingItem?.isEnabled = !permissions.screenCaptureTrusted
     accessibilityItem?.title =
       permissions.accessibilityTrusted
       ? "Accessibility Granted"
-      : "Open Accessibility Settings"
+      : "Accessibility Settings"
     accessibilityItem?.image = menuSymbol(
       permissions.accessibilityTrusted ? "checkmark.circle" : "figure.wave")
     accessibilityItem?.isEnabled = !permissions.accessibilityTrusted
     aboutItem?.title = presentation.aboutLine
-    headerView.update(presentation)
+    headerView.update(presentation, updates: updateStatusProvider())
     launchAtLoginItem?.state = LaunchAtLoginController.isEnabled ? .on : .off
     if let checkForUpdatesItem {
       configureUpdatesMenuItem(checkForUpdatesItem)
@@ -361,6 +364,7 @@ struct MenuStatusPresentation: Equatable {
   let title: String
   let subtitle: String
   let detail: String
+  let badgeText: String
   let statusLine: String
   let permissionsLine: String
   let aboutLine: String
@@ -383,10 +387,13 @@ struct MenuStatusPresentation: Equatable {
     self.permissionsLine = "Permissions: \(permissions.menuSummary)"
     self.aboutLine = "agentd \(appVersion) — \(mode)\(policy)"
     if !permissions.allTrusted {
+      self.badgeText = "Setup"
       self.symbolName = "exclamationmark.triangle.fill"
     } else if paused {
+      self.badgeText = "Paused"
       self.symbolName = "pause.circle"
     } else {
+      self.badgeText = "Capturing"
       self.symbolName = "circle.fill"
     }
   }
@@ -394,14 +401,17 @@ struct MenuStatusPresentation: Equatable {
 
 @MainActor
 private final class MenuHeaderView: NSView {
+  private let materialView = NSVisualEffectView()
   private let iconView = NSImageView()
   private let titleLabel = NSTextField(labelWithString: "EvalOps agentd")
   private let subtitleLabel = NSTextField(labelWithString: "local-only")
+  private let badgeLabel = NSTextField(labelWithString: "Starting")
   private let detailLabel = NSTextField(labelWithString: "Starting…")
   private let permissionLabel = NSTextField(labelWithString: "Permissions: Checking…")
+  private let updateLabel = NSTextField(labelWithString: "Updates: Checking…")
 
   init() {
-    super.init(frame: NSRect(x: 0, y: 0, width: 340, height: 92))
+    super.init(frame: NSRect(x: 0, y: 0, width: 340, height: 112))
     translatesAutoresizingMaskIntoConstraints = false
     build()
   }
@@ -412,14 +422,16 @@ private final class MenuHeaderView: NSView {
   }
 
   override var intrinsicContentSize: NSSize {
-    NSSize(width: 340, height: 92)
+    NSSize(width: 340, height: 112)
   }
 
-  func update(_ presentation: MenuStatusPresentation) {
+  func update(_ presentation: MenuStatusPresentation, updates: SparkleUpdateMenuPresentation) {
     titleLabel.stringValue = presentation.title
     subtitleLabel.stringValue = presentation.subtitle
+    badgeLabel.stringValue = presentation.badgeText
     detailLabel.stringValue = presentation.detail
     permissionLabel.stringValue = presentation.permissionsLine
+    updateLabel.stringValue = updates.statusLine
     iconView.image = NSImage(
       systemSymbolName: presentation.symbolName,
       accessibilityDescription: presentation.title
@@ -428,9 +440,28 @@ private final class MenuHeaderView: NSView {
       presentation.symbolName == "exclamationmark.triangle.fill"
       ? .systemYellow
       : .controlAccentColor
+    badgeLabel.textColor =
+      presentation.symbolName == "exclamationmark.triangle.fill"
+      ? .controlTextColor
+      : .controlAccentColor
+    badgeLabel.layer?.backgroundColor =
+      presentation.symbolName == "exclamationmark.triangle.fill"
+      ? NSColor.systemYellow.withAlphaComponent(0.22).cgColor
+      : NSColor.controlAccentColor.withAlphaComponent(0.16).cgColor
   }
 
   private func build() {
+    materialView.material = .menu
+    materialView.blendingMode = .withinWindow
+    materialView.state = .active
+    materialView.translatesAutoresizingMaskIntoConstraints = false
+    materialView.wantsLayer = true
+    materialView.layer?.cornerRadius = 10
+    materialView.layer?.masksToBounds = true
+    materialView.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor
+    materialView.layer?.borderWidth = 0.5
+    addSubview(materialView)
+
     iconView.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)
     iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .semibold)
     iconView.contentTintColor = .controlAccentColor
@@ -443,6 +474,16 @@ private final class MenuHeaderView: NSView {
     subtitleLabel.textColor = .secondaryLabelColor
     subtitleLabel.lineBreakMode = .byTruncatingTail
 
+    badgeLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+    badgeLabel.alignment = .center
+    badgeLabel.textColor = .controlAccentColor
+    badgeLabel.wantsLayer = true
+    badgeLabel.layer?.cornerRadius = 8
+    badgeLabel.layer?.masksToBounds = true
+    badgeLabel.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.16).cgColor
+    badgeLabel.setContentHuggingPriority(.required, for: .horizontal)
+    badgeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
     detailLabel.font = .systemFont(ofSize: 12, weight: .regular)
     detailLabel.textColor = .labelColor
     detailLabel.lineBreakMode = .byTruncatingTail
@@ -450,6 +491,10 @@ private final class MenuHeaderView: NSView {
     permissionLabel.font = .systemFont(ofSize: 11, weight: .regular)
     permissionLabel.textColor = .secondaryLabelColor
     permissionLabel.lineBreakMode = .byTruncatingTail
+
+    updateLabel.font = .systemFont(ofSize: 11, weight: .regular)
+    updateLabel.textColor = .tertiaryLabelColor
+    updateLabel.lineBreakMode = .byTruncatingTail
 
     let titleStack = NSStackView(views: [titleLabel, subtitleLabel])
     titleStack.orientation = .vertical
@@ -463,23 +508,37 @@ private final class MenuHeaderView: NSView {
     row.spacing = 9
     row.translatesAutoresizingMaskIntoConstraints = false
 
-    let stack = NSStackView(views: [row, detailLabel, permissionLabel])
+    let detailRow = NSStackView(views: [detailLabel, badgeLabel])
+    detailRow.orientation = .horizontal
+    detailRow.alignment = .centerY
+    detailRow.distribution = .fill
+    detailRow.spacing = 8
+    detailRow.translatesAutoresizingMaskIntoConstraints = false
+
+    let stack = NSStackView(views: [row, detailRow, permissionLabel, updateLabel])
     stack.orientation = .vertical
     stack.alignment = .leading
-    stack.spacing = 6
+    stack.spacing = 5
     stack.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(stack)
+    materialView.addSubview(stack)
 
     NSLayoutConstraint.activate([
+      materialView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      materialView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+      materialView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+      materialView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
       iconView.widthAnchor.constraint(equalToConstant: 24),
       iconView.heightAnchor.constraint(equalToConstant: 24),
-      stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-      stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-      stack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-      stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+      badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 58),
+      badgeLabel.heightAnchor.constraint(equalToConstant: 18),
+      stack.leadingAnchor.constraint(equalTo: materialView.leadingAnchor, constant: 12),
+      stack.trailingAnchor.constraint(equalTo: materialView.trailingAnchor, constant: -12),
+      stack.topAnchor.constraint(equalTo: materialView.topAnchor, constant: 10),
+      stack.bottomAnchor.constraint(equalTo: materialView.bottomAnchor, constant: -9),
       titleStack.trailingAnchor.constraint(lessThanOrEqualTo: stack.trailingAnchor),
-      detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: stack.trailingAnchor),
+      detailRow.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
       permissionLabel.trailingAnchor.constraint(lessThanOrEqualTo: stack.trailingAnchor),
+      updateLabel.trailingAnchor.constraint(lessThanOrEqualTo: stack.trailingAnchor),
     ])
   }
 }

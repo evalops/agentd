@@ -35,6 +35,29 @@ struct SparkleUpdaterConfiguration: Equatable {
   }
 }
 
+struct SparkleUpdateMenuPresentation: Equatable {
+  let title: String
+  let statusLine: String
+  let toolTip: String
+  let symbolName: String
+  let isConfigured: Bool
+
+  init(configuration: SparkleUpdaterConfiguration) {
+    self.isConfigured = configuration.isConfigured
+    if configuration.isConfigured {
+      self.title = "Check for Updates…"
+      self.statusLine = "Updates: Enabled"
+      self.toolTip = "Check for a signed EvalOps agentd update."
+      self.symbolName = "arrow.down.circle"
+    } else {
+      self.title = "Updates Not Configured"
+      self.statusLine = "Updates: Local build"
+      self.toolTip = configuration.disabledReason
+      self.symbolName = "arrow.down.circle.dotted"
+    }
+  }
+}
+
 @MainActor
 final class SparkleSoftwareUpdater {
   private let configuration: SparkleUpdaterConfiguration
@@ -54,18 +77,31 @@ final class SparkleSoftwareUpdater {
     }
   }
 
+  var menuPresentation: SparkleUpdateMenuPresentation {
+    SparkleUpdateMenuPresentation(configuration: configuration)
+  }
+
   func configure(menuItem: NSMenuItem) {
+    let presentation = menuPresentation
+    menuItem.title = presentation.title
+    menuItem.image = Self.menuSymbol(presentation.symbolName)
+    menuItem.toolTip = presentation.toolTip
+
     guard let updaterController else {
       menuItem.target = nil
       menuItem.action = nil
       menuItem.isEnabled = false
-      menuItem.toolTip = configuration.disabledReason
       return
     }
 
     menuItem.target = updaterController
     menuItem.action = #selector(SPUStandardUpdaterController.checkForUpdates(_:))
     menuItem.isEnabled = updaterController.updater.canCheckForUpdates
-    menuItem.toolTip = "Check for a signed EvalOps agentd update."
+  }
+
+  private static func menuSymbol(_ symbolName: String) -> NSImage? {
+    let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+    image?.isTemplate = true
+    return image
   }
 }

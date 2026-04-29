@@ -17,6 +17,12 @@ final class SparkleUpdaterConfigurationTests: XCTestCase {
       "https://updates.example.invalid/agentd/appcast.xml"
     )
     XCTAssertEqual(cfg.publicEDKey, "public-key")
+
+    let presentation = SparkleUpdateMenuPresentation(configuration: cfg)
+    XCTAssertEqual(presentation.title, "Check for Updates…")
+    XCTAssertEqual(presentation.statusLine, "Updates: Enabled")
+    XCTAssertEqual(presentation.symbolName, "arrow.down.circle")
+    XCTAssertTrue(presentation.isConfigured)
   }
 
   func testDisabledWithoutFeedOrPublicKey() {
@@ -27,6 +33,12 @@ final class SparkleUpdaterConfigurationTests: XCTestCase {
       cfg.disabledReason,
       "Sparkle update feed and public key are not configured for this build."
     )
+
+    let presentation = SparkleUpdateMenuPresentation(configuration: cfg)
+    XCTAssertEqual(presentation.title, "Updates Not Configured")
+    XCTAssertEqual(presentation.statusLine, "Updates: Local build")
+    XCTAssertEqual(presentation.symbolName, "arrow.down.circle.dotted")
+    XCTAssertFalse(presentation.isConfigured)
   }
 
   func testDisabledWhenPublicKeyIsBlank() {
