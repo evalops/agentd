@@ -262,6 +262,82 @@ final class PipelineTests: XCTestCase {
     XCTAssertTrue(window.containsDuplicate(of: b))
   }
 
+  func testOcrDiffSamplerOverridesPHashDuplicateWhenTextMateriallyChanges() async throws {
+    let recorder = BatchRecorder()
+    var cfg = Self.config()
+    cfg.ocrDiffSamplerEnabled = true
+    let pipeline = FramePipeline(
+      config: cfg,
+      ocr: SequenceOCR([
+        "build succeeded target alpha",
+        "deployment blocked target beta",
+      ])
+    ) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.flush()
+
+    let batches = await recorder.snapshot()
+    let batch = try XCTUnwrap(batches.first)
+    XCTAssertEqual(batch.frames.count, 2)
+    XCTAssertEqual(batch.droppedCounts.duplicate, 0)
+  }
+
+  func testOcrDiffSamplerKeepsPHashDuplicateDroppedWhenTextIsSimilar() async throws {
+    let recorder = BatchRecorder()
+    var cfg = Self.config()
+    cfg.ocrDiffSamplerEnabled = true
+    let pipeline = FramePipeline(
+      config: cfg,
+      ocr: SequenceOCR([
+        "build succeeded target alpha",
+        "build succeeded target alpha",
+      ])
+    ) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.flush()
+
+    let batches = await recorder.snapshot()
+    let batch = try XCTUnwrap(batches.first)
+    XCTAssertEqual(batch.frames.count, 1)
+    XCTAssertEqual(batch.droppedCounts.duplicate, 1)
+  }
+
+  func testOcrDiffSamplerStaysDisabledByDefault() async throws {
+    let recorder = BatchRecorder()
+    let pipeline = FramePipeline(
+      config: Self.config(),
+      ocr: SequenceOCR([
+        "build succeeded target alpha",
+        "deployment blocked target beta",
+      ])
+    ) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.flush()
+
+    let batches = await recorder.snapshot()
+    let batch = try XCTUnwrap(batches.first)
+    XCTAssertEqual(batch.frames.count, 1)
+    XCTAssertEqual(batch.droppedCounts.duplicate, 1)
+  }
+
+  func testOcrDiffSamplerSimilarityUsesTokenShingles() {
+    XCTAssertEqual(OcrDiffSampler.shingledSimilarity("alpha beta gamma", "alpha beta gamma"), 1)
+    XCTAssertLessThan(
+      OcrDiffSampler.shingledSimilarity("alpha beta gamma", "deploy failed prod"), 0.92)
+  }
+
   func testBufferedFrameDispatcherBoundsBackpressure() async throws {
     let counts = DispatchCounts()
     let dispatcher = BufferedFrameDispatcher(bufferingNewest: 2) { _ in
@@ -488,6 +564,21 @@ struct StubOCR: OCRRecognizing {
 
   func recognize(cgImage: CGImage) async throws -> OCRResult {
     OCRResult(text: text, confidence: confidence, language: "en")
+  }
+}
+
+actor SequenceOCR: OCRRecognizing {
+  private var texts: [String]
+  private let confidence: Float
+
+  init(_ texts: [String], confidence: Float = 0.9) {
+    self.texts = texts
+    self.confidence = confidence
+  }
+
+  func recognize(cgImage: CGImage) async throws -> OCRResult {
+    let text = texts.isEmpty ? "" : texts.removeFirst()
+    return OCRResult(text: text, confidence: confidence, language: "en")
   }
 }
 
