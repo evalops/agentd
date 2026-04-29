@@ -3,31 +3,70 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/permission_smoke.sh [--no-launch]
+Usage: scripts/permission_smoke.sh [--no-launch] [--no-install-applications]
 
 Packages EvalOps agentd if needed, records local evidence, writes a permission
-smoke report template, and opens the app unless --no-launch is supplied.
+smoke report template, installs the tested app to /Applications by default, and
+opens the installed app unless --no-launch is supplied.
+
+Environment:
+  AGENTD_APP_PATH               Source app bundle to test.
+  AGENTD_APPLICATIONS_DIR       Applications directory, default /Applications.
+  AGENTD_INSTALL_APPLICATIONS   Set to 0 to skip the Applications install.
 USAGE
 }
 
 launch=1
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  usage
-  exit 0
-elif [[ "${1:-}" == "--no-launch" ]]; then
-  launch=0
-elif [[ $# -gt 0 ]]; then
-  usage >&2
-  exit 64
-fi
+install_applications="${AGENTD_INSTALL_APPLICATIONS:-1}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    --no-launch)
+      launch=0
+      shift
+      ;;
+    --no-install-applications)
+      install_applications=0
+      shift
+      ;;
+    *)
+      usage >&2
+      exit 64
+      ;;
+  esac
+done
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-app_path="${AGENTD_APP_PATH:-"$root/dist/EvalOps agentd.app"}"
+source_app_path="${AGENTD_APP_PATH:-"$root/dist/EvalOps agentd.app"}"
+applications_dir="${AGENTD_APPLICATIONS_DIR:-/Applications}"
+installed_app_path="$applications_dir/EvalOps agentd.app"
+app_path="$source_app_path"
 report_path="${AGENTD_SMOKE_REPORT:-"$root/dist/permission-smoke-report.md"}"
 batch_dir="${AGENTD_BATCH_DIR:-"$HOME/.evalops/agentd/batches"}"
 
-if [[ ! -d "$app_path" ]]; then
+if [[ ! -d "$source_app_path" && -n "${AGENTD_APP_PATH:-}" ]]; then
+  echo "Missing source app bundle: $source_app_path" >&2
+  exit 66
+elif [[ ! -d "$source_app_path" ]]; then
   "$root/scripts/package_app.sh"
+fi
+
+if [[ "$install_applications" != "0" ]]; then
+  if [[ "$installed_app_path" != "$applications_dir/"*"EvalOps agentd.app" ]]; then
+    echo "Refusing unsafe Applications install path: $installed_app_path" >&2
+    exit 64
+  fi
+  mkdir -p "$applications_dir"
+  if [[ "$source_app_path" != "$installed_app_path" ]]; then
+    rm -rf "$installed_app_path"
+    ditto "$source_app_path" "$installed_app_path"
+  fi
+  app_path="$installed_app_path"
+  echo "Installed $source_app_path -> $installed_app_path"
 fi
 
 binary="$app_path/Contents/MacOS/agentd"
@@ -67,6 +106,7 @@ cat > "$report_path" <<REPORT
 - Date: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 - macOS: ${macos_version} (${build_version})
 - App: ${app_path}
+- Source app: ${source_app_path}
 - App SHA-256: ${app_sha}
 - Zip SHA-256: ${zip_sha:-not generated}
 - Codesign authorities: ${codesign_summary:-ad-hoc}
@@ -77,9 +117,10 @@ cat > "$report_path" <<REPORT
 
 ## TCC Stability
 
-If the app is ad-hoc signed, macOS can bind Screen Recording and Accessibility
-approval to the exact CDHash above. Do not rebuild between granting permissions
-and verification. After approving this exact packaged app, relaunch it with:
+This smoke installs the tested app to a stable Applications path before launch,
+because macOS TCC approvals can bind to both app identity and path. Do not move,
+rebuild, or replace this exact app between granting permissions and
+verification. After approving it, relaunch it with:
 
 \`\`\`
 AGENTD_APP_PATH="${app_path}" ./script/build_and_run.sh --tcc-verify

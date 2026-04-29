@@ -128,9 +128,12 @@ capture startup in the background so a full relaunch is not required.
 For ad-hoc local builds, approve the exact packaged app you are testing and use
 `./script/build_and_run.sh --tcc-verify`; rebuilding changes the CDHash and can
 make macOS treat it as a different TCC client.
-For a downloaded/notarized workflow artifact, verify the artifact in place with
-`AGENTD_APP_PATH="/path/to/EvalOps agentd.app" ./script/build_and_run.sh --tcc-verify`
-so the tested path/signature matches the System Settings grant.
+For a downloaded/notarized workflow artifact, run
+`AGENTD_APP_PATH="/path/to/EvalOps agentd.app" scripts/permission_smoke.sh`.
+The smoke helper installs that artifact to `/Applications/EvalOps agentd.app`
+before launch so the System Settings grant binds to a stable path/signature.
+Then verify the same installed bundle with
+`AGENTD_APP_PATH="/Applications/EvalOps agentd.app" ./script/build_and_run.sh --tcc-verify`.
 `--local-batch-verify` also relaunches without rebuilding, activates Codex by
 default, and prints only frame counts/metadata lengths so OCR text is not echoed
 into the terminal. Set `AGENTD_SMOKE_FOREGROUND_APP=Terminal` or another
@@ -158,10 +161,13 @@ it:
 - `AGENTD_NOTARY_TEAM_ID`
 - `AGENTD_NOTARY_PASSWORD`: app-specific password for notarization.
 
-`scripts/permission_smoke.sh` packages the app when needed, records macOS
+`scripts/permission_smoke.sh` packages the app when needed, installs the tested
+bundle to `/Applications/EvalOps agentd.app` by default, records macOS
 version/checksum/codesign evidence in `dist/permission-smoke-report.md`, and
-opens the app unless `--no-launch` is supplied. Use it for the hardware-backed
-Screen Recording and Accessibility permission smoke.
+opens the installed app unless `--no-launch` is supplied. Use it for the
+hardware-backed Screen Recording and Accessibility permission smoke. Set
+`AGENTD_APPLICATIONS_DIR` for tests or `AGENTD_INSTALL_APPLICATIONS=0` to skip
+the install.
 `scripts/multi_display_smoke.sh` records repeatable `list-displays` snapshots
 for before-attach, after-attach, capture-all, and after-detach phases. It writes
 bounded JSON and a Markdown report without screenshots or OCR text, and
