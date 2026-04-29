@@ -84,6 +84,10 @@ final class SubmitterTests: XCTestCase {
     let cfg = try JSONDecoder().decode(AgentConfig.self, from: legacy)
     XCTAssertEqual(cfg.organizationId, "org_legacy")
     XCTAssertEqual(cfg.allowedBundleIds, AgentConfig.defaultAllowedBundleIds)
+    XCTAssertTrue(cfg.allowedBundleIds.contains("com.openai.codex"))
+    XCTAssertTrue(cfg.allowedBundleIds.contains("com.openai.chat"))
+    XCTAssertTrue(cfg.allowedBundleIds.contains("com.anthropic.claudefordesktop"))
+    XCTAssertTrue(cfg.allowedBundleIds.contains("com.mitchellh.ghostty"))
     XCTAssertEqual(cfg.maxOcrTextChars, 4096)
     XCTAssertEqual(cfg.maxBatchBytes, 512 * 1024 * 1024)
 
@@ -343,6 +347,7 @@ final class SubmitterTests: XCTestCase {
         Self.response(for: url, statusCode: 200)
       )
     }
+    let dir = try makeTemporaryDirectory()
     let submitter = try Submitter(
       endpoint: URL(
         string: "https://chronicle.example.com/chronicle.v1.ChronicleService/SubmitBatch")!,
@@ -357,7 +362,8 @@ final class SubmitterTests: XCTestCase {
         "agentd:chronicle": "chronicle-token",
         "agentd:secret-broker": "broker-session",
       ]),
-      client: client
+      client: client,
+      batchDirectory: dir
     )
 
     let result = await submitter.submit(Self.batch())
@@ -446,6 +452,7 @@ final class SubmitterTests: XCTestCase {
       droppedCounts: DropCounts(secret: 0, duplicate: 0, deniedApp: 0, deniedPath: 0)
     )
 
+    let dir = try makeTemporaryDirectory()
     let submitter = try Submitter(
       endpoint: URL(
         string: "https://chronicle.example.com/chronicle.v1.ChronicleService/SubmitBatch")!,
@@ -460,7 +467,8 @@ final class SubmitterTests: XCTestCase {
         "agentd:chronicle": "chronicle-token",
         "agentd:secret-broker": "broker-session",
       ]),
-      client: client
+      client: client,
+      batchDirectory: dir
     )
 
     let result = await submitter.submit(batch)

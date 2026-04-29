@@ -44,11 +44,19 @@ if [[ -f "$root/dist/agentd.zip" ]]; then
 fi
 macos_version="$(sw_vers -productVersion)"
 build_version="$(sw_vers -buildVersion)"
+codesign_details="$(codesign -dvvv "$app_path" 2>&1)"
 codesign_summary="$(
-  codesign -dvv "$app_path" 2>&1 \
+  printf '%s\n' "$codesign_details" \
     | sed -n 's/^Authority=//p' \
     | awk 'NF { if (seen++) printf ", "; printf "%s", $0 } END { if (seen) print "" }'
 )"
+codesign_requirement="$(codesign -d -r- "$app_path" 2>&1 | sed -n 's/^# designated => //p')"
+codesign_cdhash="$(
+  printf '%s\n' "$codesign_details" \
+    | sed -n 's/^CDHash=//p; s/^CandidateCDHash sha256=//p' \
+    | head -1
+)"
+codesign_signature="$(printf '%s\n' "$codesign_details" | sed -n 's/^Signature=//p')"
 
 cat > "$report_path" <<REPORT
 # agentd Permission Smoke Report
@@ -59,7 +67,20 @@ cat > "$report_path" <<REPORT
 - App SHA-256: ${app_sha}
 - Zip SHA-256: ${zip_sha:-not generated}
 - Codesign authorities: ${codesign_summary:-ad-hoc}
+- Codesign signature: ${codesign_signature:-unknown}
+- Codesign CDHash: ${codesign_cdhash:-unknown}
+- Codesign requirement: ${codesign_requirement:-unknown}
 - Batch directory: ${batch_dir}
+
+## TCC Stability
+
+If the app is ad-hoc signed, macOS can bind Screen Recording and Accessibility
+approval to the exact CDHash above. Do not rebuild between granting permissions
+and verification. After approving this exact packaged app, relaunch it with:
+
+\`\`\`
+./script/build_and_run.sh --tcc-verify
+\`\`\`
 
 ## Checks
 
@@ -80,7 +101,7 @@ echo "Wrote $report_path"
 if [[ "$launch" == "1" ]]; then
   open "$app_path"
   echo "Opened $app_path"
-  echo "Grant Screen Recording and Accessibility in System Settings, relaunch, then complete $report_path."
+  echo "Grant Screen Recording and Accessibility in System Settings, then run ./script/build_and_run.sh --tcc-verify without rebuilding."
 else
   echo "Skipped launch because --no-launch was supplied."
 fi

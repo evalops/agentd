@@ -40,6 +40,10 @@ if [[ "$identity" != "-" ]]; then
 fi
 codesign "${codesign_args[@]}" "$app_path"
 codesign --verify --strict --deep --verbose=2 "$app_path"
+if [[ "$identity" == "-" ]]; then
+  echo "Ad-hoc signed app: macOS TCC approvals can bind to this build's cdhash."
+  echo "For permission smoke, approve this exact packaged app and relaunch without rebuilding."
+fi
 
 create_zip
 

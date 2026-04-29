@@ -47,6 +47,9 @@ This is the desktop component of the work tracked in
   with pending local queue pressure, and applies server-returned capture policy
   without requiring an app restart. Local hard-deny safety rails remain
   fail-closed even when a remote policy allows a bundle or path.
+- The default local allowlist includes common developer surfaces, terminals,
+  browsers, issue/chat tools, and LLM coding apps such as Codex, ChatGPT, and
+  Claude Desktop.
 - Menu-bar UI: pause/resume (`⌃⌥⌘P`), flush now (`⌃⌥⌘F`), reveal batches dir,
   diagnostics report (`⌃⌥⌘D`), delete queued batches, launch-at-login, quit.
 
@@ -60,12 +63,21 @@ python3 scripts/mock_chronicle.py --self-test Tests/Fixtures/chronicle
 scripts/package_app.sh # release .app bundle with hardened runtime signing
 scripts/permission_smoke.sh --no-launch # generate permission-smoke evidence template
 ./script/build_and_run.sh --verify # package, launch, and verify the menu app process
+./script/build_and_run.sh --tcc-verify # relaunch the existing app without rebuilding
+./script/build_and_run.sh --local-batch-verify # verify sanitized local batch output
 ```
 
 First run will trigger the system Screen Recording and Accessibility prompts the
 first time the gated APIs are called. Grant both in System Settings → Privacy &
 Security. If capture starts before the grants are complete, agentd retries
 capture startup in the background so a full relaunch is not required.
+For ad-hoc local builds, approve the exact packaged app you are testing and use
+`./script/build_and_run.sh --tcc-verify`; rebuilding changes the CDHash and can
+make macOS treat it as a different TCC client.
+`--local-batch-verify` also relaunches without rebuilding, activates Codex by
+default, and prints only frame counts/metadata lengths so OCR text is not echoed
+into the terminal. Set `AGENTD_SMOKE_FOREGROUND_APP=Terminal` or another
+allowed app to probe a different foreground surface.
 
 `scripts/package_app.sh` creates `dist/EvalOps agentd.app` and
 `dist/agentd.zip`. By default CI uses ad-hoc signing with hardened runtime so

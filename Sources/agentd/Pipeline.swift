@@ -353,6 +353,7 @@ actor FramePipeline {
       !config.allowedBundleIds.contains(ctx.bundleId)
     {
       droppedDeniedApp += 1
+      Log.scrub.info("allowlist miss bundle=\(ctx.bundleId, privacy: .public)")
       return
     }
 
