@@ -11,6 +11,9 @@ on:
         description: Swift build configuration
         required: false
         default: release
+      sparkle_download_url:
+        description: HTTPS URL where the notarized agentd.zip update archive will be hosted
+        required: true
 
 permissions:
   contents: read
@@ -47,6 +50,9 @@ jobs:
           AGENTD_NOTARY_APPLE_ID: ${{ secrets.AGENTD_NOTARY_APPLE_ID }}
           AGENTD_NOTARY_TEAM_ID: ${{ secrets.AGENTD_NOTARY_TEAM_ID }}
           AGENTD_NOTARY_PASSWORD: ${{ secrets.AGENTD_NOTARY_PASSWORD }}
+          AGENTD_SPARKLE_FEED_URL: ${{ secrets.AGENTD_SPARKLE_FEED_URL }}
+          AGENTD_SPARKLE_PUBLIC_ED_KEY: ${{ secrets.AGENTD_SPARKLE_PUBLIC_ED_KEY }}
+          AGENTD_SPARKLE_PRIVATE_ED_KEY: ${{ secrets.AGENTD_SPARKLE_PRIVATE_ED_KEY }}
         run: |
           set -euo pipefail
           missing=0
@@ -56,13 +62,20 @@ jobs:
             AGENTD_CODESIGN_IDENTITY \
             AGENTD_NOTARY_APPLE_ID \
             AGENTD_NOTARY_TEAM_ID \
-            AGENTD_NOTARY_PASSWORD
+            AGENTD_NOTARY_PASSWORD \
+            AGENTD_SPARKLE_FEED_URL \
+            AGENTD_SPARKLE_PUBLIC_ED_KEY \
+            AGENTD_SPARKLE_PRIVATE_ED_KEY
           do
             if [ -z "${!name:-}" ]; then
               echo "::error::Missing required secret $name"
               missing=1
             fi
           done
+          if [ -z "${{ inputs.sparkle_download_url }}" ]; then
+            echo "::error::Missing required workflow input sparkle_download_url"
+            missing=1
+          fi
           exit "$missing"
 
       - name: Import Developer ID certificate
@@ -86,6 +99,14 @@ jobs:
           security list-keychains -d user -s "$keychain" login.keychain-db
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$keychain"
 
+      - name: Write Sparkle signing key
+        env:
+          AGENTD_SPARKLE_PRIVATE_ED_KEY: ${{ secrets.AGENTD_SPARKLE_PRIVATE_ED_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$AGENTD_SPARKLE_PRIVATE_ED_KEY" > "$RUNNER_TEMP/sparkle-ed25519.key"
+          chmod 0600 "$RUNNER_TEMP/sparkle-ed25519.key"
+
       - name: Build, sign, notarize, and staple
         env:
           CONFIGURATION: ${{ inputs.configuration }}
@@ -93,6 +114,11 @@ jobs:
           AGENTD_NOTARY_APPLE_ID: ${{ secrets.AGENTD_NOTARY_APPLE_ID }}
           AGENTD_NOTARY_TEAM_ID: ${{ secrets.AGENTD_NOTARY_TEAM_ID }}
           AGENTD_NOTARY_PASSWORD: ${{ secrets.AGENTD_NOTARY_PASSWORD }}
+          AGENTD_SPARKLE_FEED_URL: ${{ secrets.AGENTD_SPARKLE_FEED_URL }}
+          AGENTD_SPARKLE_PUBLIC_ED_KEY: ${{ secrets.AGENTD_SPARKLE_PUBLIC_ED_KEY }}
+          AGENTD_SPARKLE_DOWNLOAD_URL: ${{ inputs.sparkle_download_url }}
+          AGENTD_SPARKLE_ED_KEY_FILE: ${{ runner.temp }}/sparkle-ed25519.key
+          AGENTD_SPARKLE_REQUIRE_SIGNED_FEED: "1"
         run: scripts/package_app.sh
 
       - name: Record checksums
@@ -100,7 +126,11 @@ jobs:
           set -euo pipefail
           (
             cd dist
-            shasum -a 256 "EvalOps agentd.app/Contents/MacOS/agentd" "agentd.zip" "update-channel.json" | tee SHA256SUMS
+            files=("EvalOps agentd.app/Contents/MacOS/agentd" "agentd.zip" "update-channel.json")
+            if [ -f appcast.xml ]; then
+              files+=("appcast.xml")
+            fi
+            shasum -a 256 "${files[@]}" | tee SHA256SUMS
           )
           codesign -dvvv --entitlements :- "dist/EvalOps agentd.app" > dist/codesign.txt 2>&1
           spctl -a -t exec -vv "dist/EvalOps agentd.app" > dist/spctl.txt 2>&1
@@ -114,6 +144,7 @@ jobs:
             dist/agentd.zip
             dist/SHA256SUMS
             dist/update-channel.json
+            dist/appcast.xml
             dist/codesign.txt
             dist/spctl.txt
           if-no-files-found: error

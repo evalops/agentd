@@ -8,9 +8,15 @@ let package = Package(
   products: [
     .executable(name: "agentd", targets: ["agentd"])
   ],
+  dependencies: [
+    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.1")
+  ],
   targets: [
     .executableTarget(
       name: "agentd",
+      dependencies: [
+        .product(name: "Sparkle", package: "Sparkle")
+      ],
       path: "Sources/agentd",
       linkerSettings: [
         .unsafeFlags([
@@ -18,6 +24,8 @@ let package = Package(
           "-Xlinker", "__TEXT",
           "-Xlinker", "__info_plist",
           "-Xlinker", "support/Info.plist",
+          "-Xlinker", "-rpath",
+          "-Xlinker", "@executable_path/../Frameworks",
         ])
       ]
     ),

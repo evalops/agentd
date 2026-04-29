@@ -146,11 +146,23 @@ allowed app to probe a different foreground surface.
 
 `scripts/package_app.sh` creates `dist/EvalOps agentd.app` and
 `dist/agentd.zip`. By default CI uses ad-hoc signing with hardened runtime so
-the bundle shape and entitlements are continuously checked. For release signing,
-set `AGENTD_CODESIGN_IDENTITY` to a Developer ID Application identity. To
-notarize and staple the bundle, either set `AGENTD_NOTARY_PROFILE` for a
-notarytool keychain profile or set `AGENTD_NOTARY_APPLE_ID`,
-`AGENTD_NOTARY_TEAM_ID`, and `AGENTD_NOTARY_PASSWORD`.
+the bundle shape, embedded Sparkle framework, and entitlements are continuously
+checked. Release builds inject `AGENTD_SPARKLE_FEED_URL` and
+`AGENTD_SPARKLE_PUBLIC_ED_KEY` so the menu bar's "Check for Updates..." action
+can use Sparkle. When `AGENTD_SPARKLE_DOWNLOAD_URL` is set, the package script
+signs the final zip with Sparkle EdDSA, writes `dist/appcast.xml`, and verifies
+that the appcast enclosure URL, signature, version, and archive length match the
+packaged artifact. Release workflow builds also enable Sparkle signed-feed
+validation so compromised update metadata cannot redirect users to a different
+archive. To dry-run Sparkle's update discovery against a packaged bundle, use
+`scripts/sparkle_update_probe.sh` with `AGENTD_SPARKLE_PROBE_FEED_URL` or a
+local `dist/appcast.xml`.
+
+For release signing, set `AGENTD_CODESIGN_IDENTITY` to a Developer ID
+Application identity. To notarize and staple the bundle, either set
+`AGENTD_NOTARY_PROFILE` for a notarytool keychain profile or set
+`AGENTD_NOTARY_APPLE_ID`, `AGENTD_NOTARY_TEAM_ID`, and
+`AGENTD_NOTARY_PASSWORD`.
 
 The `package-release` GitHub Actions workflow performs the credential-backed
 release path and uploads the stapled app, archive, checksums, codesign details,
@@ -165,6 +177,14 @@ it:
 - `AGENTD_NOTARY_APPLE_ID`
 - `AGENTD_NOTARY_TEAM_ID`
 - `AGENTD_NOTARY_PASSWORD`: app-specific password for notarization.
+- `AGENTD_SPARKLE_FEED_URL`
+- `AGENTD_SPARKLE_PUBLIC_ED_KEY`
+- `AGENTD_SPARKLE_PRIVATE_ED_KEY`: the private key text exported with Sparkle's
+  `generate_keys -x`; store it as a secret and rotate it if exposed.
+
+The workflow also requires a `sparkle_download_url` dispatch input. It must be
+the final HTTPS URL where the uploaded `agentd.zip` will be served, because
+Sparkle validates the appcast enclosure URL before downloading the update.
 
 `scripts/permission_smoke.sh` packages the app when needed, installs the tested
 bundle to `/Applications/EvalOps agentd.app` by default, records macOS
