@@ -42,6 +42,9 @@ jobs:
       - name: Validate Chronicle contract fixtures
         run: python3 scripts/mock_chronicle.py --self-test Tests/Fixtures/chronicle
 
+      - name: Validate macOS availability floor
+        run: python3 scripts/macos_availability_audit.py
+
       - name: Lint Swift formatting
         run: xcrun swift-format lint --strict --recursive Sources Tests Package.swift
 
