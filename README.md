@@ -83,6 +83,8 @@ local inspection of the shipped arm64 `codex_chronicle` helper bundled with
 ```
 swift build
 swift run agentd       # foreground; menu-bar item appears
+swift run agentd -- list-displays
+swift run agentd -- capture-once --no-ocr
 swift test
 python3 scripts/mock_chronicle.py --self-test Tests/Fixtures/chronicle
 scripts/package_app.sh # release .app bundle with hardened runtime signing
@@ -247,7 +249,9 @@ encrypted `.agentdbatch` batches.
 Diagnostics reports are written under `~/.evalops/agentd/diagnostics/` with
 `0o600` permissions. They summarize permissions, policy, queue pressure, local
 batches, active display frame/drop counters, and last submit health without OCR
-text or raw payloads.
+text or raw payloads. The same binary also supports `list-displays`,
+`capture-once`, and `selftest` diagnostic subcommands; see
+`docs/diagnostics.md`.
 
 For Chronicle-style local introspection, set `sparseFrameStorageRoot` to a
 directory such as `~/.evalops/agentd/sparse-frames`. agentd then writes

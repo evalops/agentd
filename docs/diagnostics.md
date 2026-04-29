@@ -20,3 +20,26 @@ strings, redacts secret-looking strings, and shortens home-directory paths.
 The menu also includes `Delete Queued Batches`, which removes local plaintext
 and encrypted fallback batches from the configured batch directory.
 
+## One-shot CLI
+
+The executable also has diagnostic subcommands that emit JSON without starting
+the menu-bar app:
+
+```sh
+agentd list-displays
+agentd capture-once --display-id 1 --out ~/.evalops/agentd/diagnostics/cli/capture.json
+agentd capture-once --no-ocr
+agentd selftest
+```
+
+`list-displays` reports display id, bounds, scale, main-display status, and the
+current Accessibility/Screen Recording preflight state. `capture-once` captures
+a single frame, runs the normal privacy filters, SecretScrubber, and OCR
+pipeline, then writes a redacted batch JSON object to stdout or an `0o600`
+`--out` path. It refuses to run while another agentd daemon or diagnostic
+capture holds the runtime lock, which avoids ScreenCaptureKit contention during
+support sessions.
+
+`--no-ocr` keeps the capture and scrubber path intact but records an empty OCR
+result. `--no-scrub` is recognized for operator muscle memory but deliberately
+refused; local diagnostics should not bypass the scrubber.
