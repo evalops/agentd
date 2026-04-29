@@ -149,6 +149,8 @@ agentd reads and writes `~/.evalops/agentd/config.json`. Important defaults:
 - `adaptiveOcrMinChars: 1024`
 - `adaptiveOcrBackpressureThreshold: 8`
 - `adaptiveOcrBacklogBytes: 67108864`
+- `ocrDiffSamplerEnabled: false`
+- `ocrDiffSimilarityThreshold: 0.92`
 - `sparseFrameStorageRoot: null`
 - `sparseFrameRetentionHours: 6`
 - `sparseFrameIncludeOcrText: false`

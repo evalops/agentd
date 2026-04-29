@@ -303,10 +303,55 @@ struct DedupWindow: Sendable {
   }
 }
 
+struct OcrDiffSampler: Sendable {
+  static func normalizedText(_ text: String) -> String {
+    text
+      .lowercased()
+      .components(separatedBy: CharacterSet.alphanumerics.inverted)
+      .filter { !$0.isEmpty }
+      .joined(separator: " ")
+  }
+
+  static func shouldOverrideDuplicate(
+    previousText: String?,
+    candidateText: String,
+    threshold: Double
+  ) -> Bool {
+    let candidate = normalizedText(candidateText)
+    guard !candidate.isEmpty else { return false }
+    guard let previousText else { return true }
+    let previous = normalizedText(previousText)
+    guard !previous.isEmpty else { return true }
+    return shingledSimilarity(previous, candidate) < threshold
+  }
+
+  static func shingledSimilarity(_ lhs: String, _ rhs: String) -> Double {
+    let lhsShingles = shingles(lhs)
+    let rhsShingles = shingles(rhs)
+    guard !lhsShingles.isEmpty || !rhsShingles.isEmpty else { return 1 }
+    guard !lhsShingles.isEmpty, !rhsShingles.isEmpty else { return 0 }
+    let intersection = lhsShingles.intersection(rhsShingles).count
+    let union = lhsShingles.union(rhsShingles).count
+    guard union > 0 else { return 1 }
+    return Double(intersection) / Double(union)
+  }
+
+  private static func shingles(_ text: String) -> Set<String> {
+    let tokens = text.split(separator: " ").map(String.init)
+    guard tokens.count > 1 else { return Set(tokens) }
+    var values = Set<String>()
+    for index in 0..<(tokens.count - 1) {
+      values.insert("\(tokens[index]) \(tokens[index + 1])")
+    }
+    return values
+  }
+}
+
 actor FramePipeline {
   private var config: AgentConfig
   private let ocr: any OCRRecognizing
   private var dedupWindow = DedupWindow(capacity: 16, threshold: 5)
+  private var lastEmittedOcrText: String?
   private var sparseFrameStore: SparseFrameStore?
   private var sparseFrameStoreOptions: SparseFrameStoreOptions?
 
@@ -378,7 +423,8 @@ actor FramePipeline {
     }
 
     guard let phash = PerceptualHash(cgImage: frame.cgImage) else { return }
-    if dedupWindow.containsDuplicate(of: phash) {
+    let duplicateByHash = dedupWindow.containsDuplicate(of: phash)
+    if duplicateByHash, !config.ocrDiffSamplerEnabled {
       droppedDup += 1
       return
     }
@@ -398,6 +444,21 @@ actor FramePipeline {
       return
     case .clean:
       break
+    }
+
+    if duplicateByHash {
+      if config.ocrDiffSamplerEnabled,
+        OcrDiffSampler.shouldOverrideDuplicate(
+          previousText: lastEmittedOcrText,
+          candidateText: ocrResult.text,
+          threshold: config.ocrDiffSimilarityThreshold
+        )
+      {
+        Log.capture.info("ocr diff sampler emitted pHash duplicate frame")
+      } else {
+        droppedDup += 1
+        return
+      }
     }
 
     let pendingBytes = pending.reduce(Int64(0)) { $0 + Int64($1.bytesPng) }
@@ -434,6 +495,7 @@ actor FramePipeline {
 
     pending.append(processed)
     dedupWindow.remember(phash)
+    lastEmittedOcrText = ocrResult.text
     if let sparseFrameStore {
       do {
         try await sparseFrameStore.record(image: frame.cgImage, processed: processed)
