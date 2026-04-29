@@ -13,6 +13,7 @@ final class AppController {
   private var runtimeLock: AgentdRuntimeLock?
   private var capture: CaptureService!
   private var menuBar: MenuBarController!
+  private var softwareUpdater: SparkleSoftwareUpdater?
   private var permissionSetupWindow: PermissionSetupWindowController?
   private var userPaused = false
   private var captureRunning = false
@@ -116,6 +117,8 @@ final class AppController {
       await pipeline.recordBackpressureDrop()
     }
 
+    let softwareUpdater = SparkleSoftwareUpdater()
+    self.softwareUpdater = softwareUpdater
     menuBar = MenuBarController(
       onPauseToggle: { [weak self] paused in
         Task { @MainActor in await self?.applyPause(paused) }
@@ -167,6 +170,9 @@ final class AppController {
             "launch-at-login update failed: \(error.localizedDescription, privacy: .public)"
           )
         }
+      },
+      configureUpdatesMenuItem: { menuItem in
+        softwareUpdater.configure(menuItem: menuItem)
       },
       onQuit: {
         Task { @MainActor in NSApp.terminate(nil) }

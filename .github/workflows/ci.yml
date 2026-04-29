@@ -45,6 +45,9 @@ jobs:
       - name: Validate macOS availability floor
         run: python3 scripts/macos_availability_audit.py
 
+      - name: Validate Sparkle appcast tooling
+        run: python3 scripts/sparkle_appcast.py self-test
+
       - name: Lint Swift formatting
         run: xcrun swift-format lint --strict --recursive Sources Tests Package.swift
 

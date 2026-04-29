@@ -12,6 +12,7 @@ final class MenuBarController: NSObject {
   private var permissionItem: NSMenuItem?
   private var screenRecordingItem: NSMenuItem?
   private var accessibilityItem: NSMenuItem?
+  private var checkForUpdatesItem: NSMenuItem?
   private var aboutItem: NSMenuItem?
   private var launchAtLoginItem: NSMenuItem?
   private var paused: Bool = false
@@ -27,6 +28,7 @@ final class MenuBarController: NSObject {
   private let onOpenAccessibilitySettings: @Sendable () -> Void
   private let onRelaunch: @Sendable () -> Void
   private let onLaunchAtLoginToggle: @Sendable (Bool) -> Void
+  private let configureUpdatesMenuItem: @MainActor (NSMenuItem) -> Void
   private let onQuit: @Sendable () -> Void
 
   init(
@@ -41,6 +43,7 @@ final class MenuBarController: NSObject {
     onOpenAccessibilitySettings: @escaping @Sendable () -> Void,
     onRelaunch: @escaping @Sendable () -> Void,
     onLaunchAtLoginToggle: @escaping @Sendable (Bool) -> Void,
+    configureUpdatesMenuItem: @escaping @MainActor (NSMenuItem) -> Void,
     onQuit: @escaping @Sendable () -> Void
   ) {
     self.onPauseToggle = onPauseToggle
@@ -54,6 +57,7 @@ final class MenuBarController: NSObject {
     self.onOpenAccessibilitySettings = onOpenAccessibilitySettings
     self.onRelaunch = onRelaunch
     self.onLaunchAtLoginToggle = onLaunchAtLoginToggle
+    self.configureUpdatesMenuItem = configureUpdatesMenuItem
     self.onQuit = onQuit
     self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     super.init()
@@ -155,6 +159,12 @@ final class MenuBarController: NSObject {
     launchAtLoginItem = launchItem
     menu.addItem(launchItem)
 
+    let checkForUpdatesItem = NSMenuItem(
+      title: "Check for Updates…", action: nil, keyEquivalent: "")
+    configureUpdatesMenuItem(checkForUpdatesItem)
+    self.checkForUpdatesItem = checkForUpdatesItem
+    menu.addItem(checkForUpdatesItem)
+
     menu.addItem(.separator())
 
     let about = NSMenuItem(
@@ -214,6 +224,9 @@ final class MenuBarController: NSObject {
     let policy = policyVersion.map { " policy \($0)" } ?? ""
     aboutItem?.title = "agentd \(Bundle.main.appVersion) — \(mode)\(policy)"
     launchAtLoginItem?.state = LaunchAtLoginController.isEnabled ? .on : .off
+    if let checkForUpdatesItem {
+      configureUpdatesMenuItem(checkForUpdatesItem)
+    }
   }
 
   private func statusSymbol(paused: Bool, needsPermission: Bool) -> String {
