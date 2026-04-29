@@ -108,7 +108,7 @@ enum DiagnosticProbeRunner {
 
 enum DiagnosticCLI {
   static let handledCommands = [
-    "list-displays", "capture-once", "selftest", "help", "--help", "-h",
+    "list-displays", "capture-once", "capture-worker-once", "selftest", "help", "--help", "-h",
   ]
 
   static func shouldHandle(_ arguments: [String]) -> Bool {
@@ -136,6 +136,9 @@ enum DiagnosticCLI {
       case .selftest:
         let payload = await SelftestDiagnostics.run()
         try writeJSON(payload, to: nil)
+      case .captureWorkerOnce(let options):
+        let payload = try await CaptureWorkerDiagnostics.run(options: options)
+        try writeJSON(payload, to: options.out)
       }
       return 0
     } catch let error as DiagnosticCLIError {
@@ -181,6 +184,7 @@ enum DiagnosticCommand: Equatable {
   case help
   case listDisplays
   case captureOnce(CaptureOnceOptions)
+  case captureWorkerOnce(CaptureOnceOptions)
   case selftest
 
   static func parse(_ arguments: [String]) throws -> DiagnosticCommand {
@@ -194,6 +198,8 @@ enum DiagnosticCommand: Equatable {
       return .listDisplays
     case "capture-once":
       return .captureOnce(try CaptureOnceOptions.parse(tail))
+    case "capture-worker-once":
+      return .captureWorkerOnce(try CaptureOnceOptions.parse(tail))
     case "selftest":
       guard tail.isEmpty else { throw DiagnosticCLIError.usage("selftest takes no flags") }
       return .selftest
@@ -248,6 +254,7 @@ enum DiagnosticCLIError: Error, LocalizedError {
   case noWindowContext
   case noBatchProduced
   case displayProbeFailed(String)
+  case captureWorkerFailed(String)
   case unscrubbedCaptureUnavailable
 
   var errorDescription: String? {
@@ -261,6 +268,8 @@ enum DiagnosticCLIError: Error, LocalizedError {
     case .noBatchProduced:
       return "capture produced no batch; privacy filters may have dropped the frame"
     case .displayProbeFailed(let message):
+      return message
+    case .captureWorkerFailed(let message):
       return message
     case .unscrubbedCaptureUnavailable:
       return
@@ -433,8 +442,10 @@ enum CaptureOnceDiagnostics {
       await recorder.append(batch)
       return .submitted(nil)
     }
-    let frame = try await captureOneFrame(
-      displayId: options.displayId, timeoutSeconds: 6)
+    let frame = try await CaptureWorkerClient.captureOneFrame(
+      displayId: options.displayId,
+      timeoutSeconds: 6
+    )
     let context = try await MainActor.run {
       guard let context = WindowContextProbe.current() else {
         throw DiagnosticCLIError.noWindowContext
@@ -459,7 +470,7 @@ enum CaptureOnceDiagnostics {
     )
   }
 
-  private static func captureOneFrame(
+  static func captureOneFrame(
     displayId: UInt32?,
     timeoutSeconds: UInt64
   ) async throws -> CapturedFrame {
@@ -482,6 +493,79 @@ enum CaptureOnceDiagnostics {
     } catch {
       throw error
     }
+  }
+}
+
+enum CaptureWorkerDiagnostics {
+  static func run(options: CaptureOnceOptions) async throws -> CaptureWorkerFramePayload {
+    if options.noScrub {
+      throw DiagnosticCLIError.unscrubbedCaptureUnavailable
+    }
+    let frame = try await CaptureOnceDiagnostics.captureOneFrame(
+      displayId: options.displayId,
+      timeoutSeconds: 6
+    )
+    return try CaptureWorkerFrameCodec.payload(for: frame)
+  }
+}
+
+enum CaptureWorkerClient {
+  static func captureOneFrame(displayId: UInt32?, timeoutSeconds: TimeInterval) async throws
+    -> CapturedFrame
+  {
+    let executable = URL(fileURLWithPath: CommandLine.arguments[0])
+    return try await captureOneFrame(
+      executable: executable,
+      displayId: displayId,
+      timeoutSeconds: timeoutSeconds
+    )
+  }
+
+  static func captureOneFrame(
+    executable: URL,
+    displayId: UInt32?,
+    timeoutSeconds: TimeInterval
+  ) async throws -> CapturedFrame {
+    let outputURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("agentd-capture-worker-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: outputURL) }
+
+    var arguments = ["capture-worker-once", "--no-ocr", "--out", outputURL.path]
+    if let displayId {
+      arguments += ["--display-id", String(displayId)]
+    }
+    let stderr = Pipe()
+    let supervisor = CaptureWorkerSupervisor()
+    _ = try supervisor.start(
+      CaptureWorkerProcessSpec(
+        executableURL: executable,
+        arguments: arguments,
+        standardError: stderr
+      )
+    )
+    guard
+      let result = supervisor.waitForExit(timeoutSeconds: timeoutSeconds + 2),
+      result.exited
+    else {
+      let termination = supervisor.terminate(graceSeconds: 1)
+      throw DiagnosticCLIError.captureWorkerFailed(
+        "capture worker timed out killSent=\(termination.killSent)")
+    }
+
+    let errorOutput = stderr.fileHandleForReading.readDataToEndOfFile()
+    guard result.terminationStatus == 0 else {
+      let message = String(data: errorOutput, encoding: .utf8)?.trimmingCharacters(
+        in: .whitespacesAndNewlines
+      )
+      throw DiagnosticCLIError.captureWorkerFailed(
+        message?.isEmpty == false
+          ? message!
+          : "capture worker exited with status \(result.terminationStatus ?? -1)"
+      )
+    }
+    let output = try Data(contentsOf: outputURL)
+    let payload = try CaptureWorkerFrameCodec.decodePayload(output)
+    return try CaptureWorkerFrameCodec.frame(from: payload)
   }
 }
 

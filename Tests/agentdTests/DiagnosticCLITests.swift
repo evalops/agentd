@@ -10,6 +10,7 @@ final class DiagnosticCLITests: XCTestCase {
     XCTAssertFalse(DiagnosticCLI.shouldHandle(["agentd"]))
     XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "list-displays"]))
     XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "capture-once"]))
+    XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "capture-worker-once"]))
     XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "selftest"]))
     XCTAssertFalse(DiagnosticCLI.shouldHandle(["agentd", "--local-only"]))
   }
@@ -34,6 +35,18 @@ final class DiagnosticCLITests: XCTestCase {
       return XCTFail("expected capture-once")
     }
     XCTAssertTrue(options.noScrub)
+  }
+
+  func testCaptureWorkerOnceParserReusesCaptureOnceSafeFlags() throws {
+    let command = try DiagnosticCommand.parse([
+      "capture-worker-once", "--display-id", "7", "--no-ocr",
+    ])
+
+    guard case .captureWorkerOnce(let options) = command else {
+      return XCTFail("expected capture-worker-once")
+    }
+    XCTAssertEqual(options.displayId, 7)
+    XCTAssertTrue(options.noOCR)
   }
 
   func testCaptureOnceParserRejectsUnknownFlags() {
