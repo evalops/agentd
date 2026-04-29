@@ -24,13 +24,17 @@ final class AppController {
   private var pauseWindowTimer: Timer?
   private var captureRetryTimer: Timer?
   private var foregroundPrivacyTimer: Timer?
+  private var eventCaptureTimer: Timer?
   private var foregroundPrivacyPauseReason: String?
+  private var eventCaptureScheduler: EventCaptureScheduler
+  private var eventCaptureInFlight = false
   private var idleMode = false
 
   init() {
     let cfg = ConfigStore.load()
     self.policyBaseConfig = cfg
     self.config = cfg
+    self.eventCaptureScheduler = EventCaptureScheduler(config: cfg)
 
     let submitter: Submitter
     do {
@@ -156,6 +160,7 @@ final class AppController {
     ) { [weak self] _ in
       Task { @MainActor in await self?.pollIdleState() }
     }
+    scheduleEventCaptureTimer()
     if controlClient != nil {
       heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
         Task { @MainActor in await self?.sendHeartbeat() }
@@ -190,6 +195,7 @@ final class AppController {
   }
 
   private func pollIdleState() async {
+    guard !config.eventCaptureEnabled else { return }
     guard captureRunning else { return }
     let idleSeconds = CGEventSource.secondsSinceLastEventType(
       .combinedSessionState,
@@ -317,6 +323,7 @@ final class AppController {
       next.captureAllDisplays != config.captureAllDisplays
       || next.selectedDisplayIds != config.selectedDisplayIds
     config = next
+    eventCaptureScheduler.updateConfig(next)
     await pipeline.updateConfig(next)
     if intervalChanged {
       scheduleFlushTimer()
@@ -326,7 +333,7 @@ final class AppController {
       captureRunning = false
       idleMode = false
     }
-    if captureRunning {
+    if captureRunning, !config.eventCaptureEnabled {
       await capture.updateFps(idleMode ? config.idleFps : config.captureFps)
     }
     await pollForegroundPrivacyState()
@@ -339,10 +346,21 @@ final class AppController {
     if shouldPause, captureRunning {
       captureRetryTimer?.invalidate()
       captureRetryTimer = nil
-      await capture.stop()
+      if config.eventCaptureEnabled {
+        eventCaptureInFlight = false
+      } else {
+        await capture.stop()
+      }
       captureRunning = false
       idleMode = false
     } else if !shouldPause, !captureRunning {
+      if config.eventCaptureEnabled {
+        captureRunning = true
+        scheduleEventCaptureTimer()
+        schedulePauseWindowTimer()
+        updateMenuStatus()
+        return
+      }
       do {
         try await capture.start(
           targetFps: config.captureFps,
@@ -363,6 +381,7 @@ final class AppController {
   }
 
   private func scheduleCaptureRetry() {
+    guard !config.eventCaptureEnabled else { return }
     guard captureRetryTimer == nil else { return }
     captureRetryTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: false) {
       [weak self] _ in
@@ -421,6 +440,7 @@ final class AppController {
       controlError: controlState.lastError,
       pendingStats: pending,
       ocrCacheStats: ocrCacheStats,
+      eventCaptureStats: eventCaptureScheduler.stats(),
       localBatchStats: localStats,
       localBatches: localBatches,
       captureDisplayStats: captureDisplayStats,
@@ -455,11 +475,64 @@ final class AppController {
     }
   }
 
+  private func scheduleEventCaptureTimer() {
+    eventCaptureTimer?.invalidate()
+    guard config.eventCaptureEnabled else {
+      eventCaptureTimer = nil
+      return
+    }
+    eventCaptureTimer = Timer.scheduledTimer(
+      withTimeInterval: max(0.1, config.eventCapturePollSeconds),
+      repeats: true
+    ) { [weak self] _ in
+      Task { @MainActor in await self?.pollEventCaptureTriggers() }
+    }
+  }
+
+  private func pollEventCaptureTriggers() async {
+    guard captureRunning, config.eventCaptureEnabled, !effectivePauseState().paused else { return }
+    let triggers = eventCaptureScheduler.observe(
+      context: WindowContextProbe.current(),
+      clipboardChangeCount: NSPasteboard.general.changeCount,
+      now: Date()
+    )
+    guard let trigger = triggers.first else { return }
+    await captureEvent(trigger: trigger)
+  }
+
+  private func captureEvent(trigger: EventCaptureTrigger) async {
+    guard !eventCaptureInFlight else { return }
+    eventCaptureInFlight = true
+    eventCaptureScheduler.recordCaptureStarted()
+    do {
+      let frame = try await CaptureService.captureOneFrame(
+        targetFps: max(1, config.captureFps),
+        captureAllDisplays: config.captureAllDisplays,
+        selectedDisplayIds: config.selectedDisplayIds,
+        timeoutSeconds: config.eventCaptureTimeoutSeconds,
+        onFrameDropped: { [pipeline] _ in await pipeline.recordBackpressureDrop() }
+      )
+      let context = WindowContextProbe.current()
+      await pipeline.consume(frame, context: context)
+      eventCaptureScheduler.recordCaptureSucceeded()
+      Log.capture.info("event capture succeeded trigger=\(trigger.rawValue, privacy: .public)")
+    } catch {
+      eventCaptureScheduler.recordCaptureFailed()
+      Log.capture.error(
+        "event capture failed trigger=\(trigger.rawValue, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
+    }
+    eventCaptureInFlight = false
+    updateMenuStatus()
+  }
+
   private func updateMenuStatus() {
     let detail: String
     let pauseState = effectivePauseState()
     if pauseState.paused {
       detail = pauseState.detail
+    } else if captureRunning, config.eventCaptureEnabled {
+      detail = controlState.registered ? "event capture armed, registered" : "event capture armed"
     } else if captureRunning {
       detail = controlState.registered ? "capturing, registered" : "capturing"
     } else if let error = controlState.lastError {

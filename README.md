@@ -61,6 +61,9 @@ local inspection of the shipped arm64 `codex_chronicle` helper bundled with
 - A bounded OCR result cache reuses Vision output for unchanged window/content
   observations while still running SecretScrubber on every frame before
   persistence.
+- Optional event-triggered capture mode arms one-shot captures on focused-window
+  changes, clipboard updates, and idle fallback ticks behind
+  `eventCaptureEnabled`, with debounce/min-gap counters in diagnostics.
 - Batches every 30s or 24 frames, whichever first.
 - Local-only mode persists batches under `~/.evalops/agentd/batches/` as
   `0o600` JSON by default and sweeps old or over-budget batches; HTTP mode
@@ -157,6 +160,12 @@ agentd reads and writes `~/.evalops/agentd/config.json`. Important defaults:
 - `adaptiveOcrBacklogBytes: 67108864`
 - `ocrDiffSamplerEnabled: false`
 - `ocrDiffSimilarityThreshold: 0.92`
+- `eventCaptureEnabled: false`
+- `eventCapturePollSeconds: 0.5`
+- `eventCaptureDebounceSeconds: 0.25`
+- `eventCaptureMinGapSeconds: 1`
+- `eventCaptureIdleFallbackSeconds: 30`
+- `eventCaptureTimeoutSeconds: 5`
 - `sparseFrameStorageRoot: null`
 - `sparseFrameRetentionHours: 6`
 - `sparseFrameIncludeOcrText: false`
@@ -257,10 +266,10 @@ encrypted `.agentdbatch` batches.
 
 Diagnostics reports are written under `~/.evalops/agentd/diagnostics/` with
 `0o600` permissions. They summarize permissions, policy, queue pressure, local
-batches, OCR cache hit-rate counters, active display frame/drop counters, and
-last submit health without OCR text or raw payloads. The same binary also supports `list-displays`,
-`capture-once`, and `selftest` diagnostic subcommands; see
-`docs/diagnostics.md`.
+batches, OCR cache hit-rate counters, event-capture trigger counters, active
+display frame/drop counters, and last submit health without OCR text or raw
+payloads. The same binary also supports `list-displays`, `capture-once`, and
+`selftest` diagnostic subcommands; see `docs/diagnostics.md`.
 
 For Chronicle-style local introspection, set `sparseFrameStorageRoot` to a
 directory such as `~/.evalops/agentd/sparse-frames`. agentd then writes

@@ -13,6 +13,8 @@ The report includes:
   policy source;
 - in-memory frame pressure and queued local batch count/bytes;
 - OCR cache entry, hit-rate, miss, and eviction counters;
+- event-capture trigger counts, debounce/min-gap suppressions, and one-shot
+  capture success/failure counts;
 - queued batch id, modification time, size, and encryption state.
 
 The report omits OCR text and raw queued payloads. It strips endpoint query

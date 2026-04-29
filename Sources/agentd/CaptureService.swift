@@ -45,6 +45,17 @@ enum DisplaySelection {
   }
 }
 
+enum CaptureOneShotError: LocalizedError {
+  case timedOut
+
+  var errorDescription: String? {
+    switch self {
+    case .timedOut:
+      return "timed out waiting for a captured frame"
+    }
+  }
+}
+
 actor CaptureService: NSObject {
   private var captures: [CGDirectDisplayID: DisplayCapture] = [:]
   private let onFrame: @Sendable (CapturedFrame) async -> Void
@@ -149,6 +160,50 @@ actor CaptureService: NSObject {
     captures.values.map { $0.output.stats() }.sorted { $0.displayId < $1.displayId }
   }
 
+  static func captureOneFrame(
+    targetFps: Double,
+    captureAllDisplays: Bool,
+    selectedDisplayIds: [UInt32],
+    timeoutSeconds: Double,
+    onFrameDropped: @escaping @Sendable (CGDirectDisplayID) async -> Void = { _ in }
+  ) async throws -> CapturedFrame {
+    let receiver = OneShotFrameReceiver()
+    let service = CaptureService { frame in
+      await receiver.record(frame)
+    } onFrameDropped: { displayId in
+      await onFrameDropped(displayId)
+    }
+
+    try await service.start(
+      targetFps: targetFps,
+      captureAllDisplays: captureAllDisplays,
+      selectedDisplayIds: selectedDisplayIds
+    )
+
+    let waitTask = Task {
+      try await receiver.wait()
+    }
+    let timeoutTask = Task {
+      do {
+        try await Task.sleep(nanoseconds: UInt64(max(0.5, timeoutSeconds) * 1_000_000_000))
+        await receiver.fail(CaptureOneShotError.timedOut)
+      } catch {
+        await receiver.fail(error)
+      }
+    }
+
+    do {
+      let frame = try await waitTask.value
+      timeoutTask.cancel()
+      await service.stop()
+      return frame
+    } catch {
+      timeoutTask.cancel()
+      await service.stop()
+      throw error
+    }
+  }
+
   private static func streamConfiguration(
     display: SCDisplay,
     targetFps: Double
@@ -173,6 +228,31 @@ actor CaptureService: NSObject {
     let boundsWidth = CGDisplayBounds(displayId).width
     guard boundsWidth > 0 else { return nil }
     return Double(pixelWidth) / Double(boundsWidth)
+  }
+}
+
+actor OneShotFrameReceiver {
+  private var frame: CapturedFrame?
+  private var continuation: CheckedContinuation<CapturedFrame, any Error>?
+
+  func record(_ frame: CapturedFrame) {
+    guard self.frame == nil else { return }
+    self.frame = frame
+    continuation?.resume(returning: frame)
+    continuation = nil
+  }
+
+  func wait() async throws -> CapturedFrame {
+    if let frame { return frame }
+    return try await withCheckedThrowingContinuation { continuation in
+      self.continuation = continuation
+    }
+  }
+
+  func fail(_ error: any Error) {
+    guard frame == nil else { return }
+    continuation?.resume(throwing: error)
+    continuation = nil
   }
 }
 

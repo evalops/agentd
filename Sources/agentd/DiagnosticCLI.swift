@@ -296,51 +296,17 @@ enum CaptureOnceDiagnostics {
           "display id \(displayId) is not available; run agentd list-displays")
       }
     }
-    let receiver = OneShotFrameReceiver()
-    let oneShotCapture = CaptureService { frame in
-      await receiver.record(frame)
-    }
-    try await oneShotCapture.start(
-      targetFps: 2,
-      captureAllDisplays: false,
-      selectedDisplayIds: displayId.map { [$0] } ?? []
-    )
-    defer {
-      Task { await oneShotCapture.stop() }
-    }
-    return try await withThrowingTaskGroup(of: CapturedFrame.self) { group in
-      group.addTask {
-        await receiver.wait()
-      }
-      group.addTask {
-        try await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
-        throw DiagnosticCLIError.timeout
-      }
-      guard let frame = try await group.next() else {
-        throw DiagnosticCLIError.timeout
-      }
-      group.cancelAll()
-      await oneShotCapture.stop()
-      return frame
-    }
-  }
-}
-
-actor OneShotFrameReceiver {
-  private var frame: CapturedFrame?
-  private var continuation: CheckedContinuation<CapturedFrame, Never>?
-
-  func record(_ frame: CapturedFrame) {
-    guard self.frame == nil else { return }
-    self.frame = frame
-    continuation?.resume(returning: frame)
-    continuation = nil
-  }
-
-  func wait() async -> CapturedFrame {
-    if let frame { return frame }
-    return await withCheckedContinuation { continuation in
-      self.continuation = continuation
+    do {
+      return try await CaptureService.captureOneFrame(
+        targetFps: 2,
+        captureAllDisplays: false,
+        selectedDisplayIds: displayId.map { [$0] } ?? [],
+        timeoutSeconds: Double(timeoutSeconds)
+      )
+    } catch CaptureOneShotError.timedOut {
+      throw DiagnosticCLIError.timeout
+    } catch {
+      throw error
     }
   }
 }
