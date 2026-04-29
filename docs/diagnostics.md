@@ -20,6 +20,12 @@ strings, redacts secret-looking strings, and shortens home-directory paths.
 The menu also includes `Delete Queued Batches`, which removes local plaintext
 and encrypted fallback batches from the configured batch directory.
 
+Foreground privacy pauses are visible as capture-state reasons. These pauses
+release active ScreenCaptureKit streams while known protected streaming content,
+remote-desktop content, or configured pause-window title patterns are focused,
+so support reports can distinguish deliberate privacy release from capture
+failure.
+
 ## One-shot CLI
 
 The executable also has diagnostic subcommands that emit JSON without starting

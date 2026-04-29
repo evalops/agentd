@@ -6,13 +6,14 @@ enum EffectivePauseState: Sendable, Equatable {
   case active
   case manual
   case scheduled(id: String, reason: String, endsAt: Date)
+  case foregroundPrivacy(reason: String)
   case policy(reason: String?)
 
   var paused: Bool {
     switch self {
     case .active:
       return false
-    case .manual, .scheduled, .policy:
+    case .manual, .scheduled, .foregroundPrivacy, .policy:
       return true
     }
   }
@@ -25,6 +26,8 @@ enum EffectivePauseState: Sendable, Equatable {
       return "manual"
     case .scheduled(_, let reason, _):
       return "scheduled:\(reason)"
+    case .foregroundPrivacy(let reason):
+      return "foreground_privacy:\(reason)"
     case .policy(let reason):
       return reason.map { "policy:\($0)" } ?? "policy"
     }
@@ -38,6 +41,8 @@ enum EffectivePauseState: Sendable, Equatable {
       return "paused by user"
     case .scheduled(_, let reason, _):
       return "paused by schedule: \(reason)"
+    case .foregroundPrivacy(let reason):
+      return "paused for foreground privacy: \(reason)"
     case .policy(let reason):
       return "paused by policy\(reason.map { ": \($0)" } ?? "")"
     }
@@ -48,6 +53,7 @@ struct PauseStateResolver: Sendable {
   static func resolve(
     userPaused: Bool,
     scheduledWindows: [ScheduledPauseWindow],
+    foregroundPrivacyReason: String?,
     policyPaused: Bool,
     policyReason: String?,
     now: Date
@@ -57,6 +63,9 @@ struct PauseStateResolver: Sendable {
     }
     if let window = scheduledWindows.first(where: { $0.startsAt <= now && now < $0.endsAt }) {
       return .scheduled(id: window.id, reason: window.reason, endsAt: window.endsAt)
+    }
+    if let foregroundPrivacyReason {
+      return .foregroundPrivacy(reason: foregroundPrivacyReason)
     }
     if policyPaused {
       return .policy(reason: policyReason)
