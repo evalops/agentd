@@ -338,9 +338,14 @@ struct AgentConfig: Codable, Sendable {
     "com.apple.dt.Xcode",
     "com.microsoft.VSCode",
     "com.todesktop.230313mzl4w4u92",  // Cursor
+    "com.todesktop.230313mzl4w4u92.helper",  // Cursor helpers can be foreground in terminals
     "com.googlecode.iterm2",
     "com.apple.Terminal",
+    "com.mitchellh.ghostty",
     "dev.warp.Warp-Stable",
+    "com.openai.codex",
+    "com.openai.chat",
+    "com.anthropic.claudefordesktop",
     "company.thebrowser.Browser",  // Arc
     "com.google.Chrome",
     "com.apple.Safari",

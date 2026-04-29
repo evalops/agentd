@@ -9,7 +9,7 @@ bundle_id="dev.evalops.agentd"
 app_bundle="$root/dist/$app_name.app"
 
 usage() {
-  echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--permission-smoke]" >&2
+  echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--reuse|--tcc-verify|--local-batch-verify|--permission-smoke]" >&2
   exit 2
 }
 
@@ -21,8 +21,23 @@ build_app() {
   "$root/scripts/package_app.sh"
 }
 
+require_existing_app() {
+  if [[ ! -x "$app_bundle/Contents/MacOS/$process_name" ]]; then
+    echo "Missing packaged app: $app_bundle" >&2
+    echo "Run $0 once before no-rebuild verification." >&2
+    exit 66
+  fi
+}
+
 open_app() {
   /usr/bin/open -n "$app_bundle"
+}
+
+activate_probe_app() {
+  local foreground_app="${AGENTD_SMOKE_FOREGROUND_APP:-Codex}"
+  if [[ -n "$foreground_app" ]]; then
+    osascript -e "tell application \"$foreground_app\" to activate" >/dev/null 2>&1 || true
+  fi
 }
 
 stop_running
@@ -51,6 +66,88 @@ case "$mode" in
     open_app
     sleep 2
     pgrep -x "$process_name" >/dev/null
+    ;;
+  --reuse|reuse)
+    require_existing_app
+    open_app
+    ;;
+  --tcc-verify|tcc-verify)
+    require_existing_app
+    open_app
+    sleep 2
+    app_pid="$(pgrep -nx "$process_name" || true)"
+    if [[ -z "$app_pid" ]]; then
+      echo "TCC verification failed: $process_name did not stay running." >&2
+      exit 76
+    fi
+    sleep 18
+    recent_logs="$(
+      /usr/bin/log show --last 45s --info --style compact --predicate "subsystem == \"$bundle_id\" && processID == $app_pid" 2>/dev/null \
+        | tail -120
+    )"
+    printf '%s\n' "$recent_logs"
+    if grep -q 'capture started' <<<"$recent_logs"; then
+      echo "TCC verification passed: capture started."
+    elif grep -q 'capture start failed' <<<"$recent_logs"; then
+      echo "TCC verification failed: capture did not start. If this app is ad-hoc signed, approve this exact packaged copy and rerun --tcc-verify without rebuilding." >&2
+      exit 78
+    else
+      echo "TCC verification inconclusive: no capture start/failure log found." >&2
+      exit 75
+    fi
+    ;;
+  --local-batch-verify|local-batch-verify)
+    require_existing_app
+    start_epoch="$(date +%s)"
+    open_app
+    activate_probe_app
+    sleep 35
+    latest_batch="$(
+      {
+        find "$HOME/.evalops/agentd/batches" -type f -name '*.json' -print0 2>/dev/null \
+          | xargs -0 stat -f '%m %N' 2>/dev/null \
+          | sort -rn \
+          | sed -n '1s/^[0-9][0-9]* //p'
+      } || true
+    )"
+    if [[ -z "$latest_batch" ]]; then
+      echo "Local batch verification failed: no local JSON batches found." >&2
+      exit 79
+    fi
+    batch_epoch="$(stat -f %m "$latest_batch")"
+    if (( batch_epoch < start_epoch )); then
+      echo "Local batch verification failed: newest batch predates this run: $latest_batch" >&2
+      exit 79
+    fi
+    summary="$(
+      jq '{
+        file: input_filename,
+        localOnly,
+        batchId: .batch.batchId,
+        frames: (.batch.frames | length),
+        droppedCounts: .batch.droppedCounts,
+        firstFrame: ((.batch.frames[0] // {}) | {
+          bundleId,
+          appName,
+          windowTitleLength: (.windowTitle | length // 0),
+          displayId,
+          ocrTextLength: (.ocrText | length // 0),
+          ocrTextTruncated
+        })
+      }' "$latest_batch"
+    )"
+    printf '%s\n' "$summary"
+    frames="$(jq '.batch.frames | length' "$latest_batch")"
+    denied_app="$(jq '.batch.droppedCounts.deniedApp // 0' "$latest_batch")"
+    if (( frames > 0 )); then
+      echo "Local batch verification passed: persisted sanitized frame metadata without printing OCR text."
+    elif (( denied_app > 0 )); then
+      echo "Local batch verification failed: frames were captured but denied by app policy. Check allowlist miss logs and AGENTD_SMOKE_FOREGROUND_APP." >&2
+      exit 80
+    else
+      echo "Local batch verification failed: no frames reached the local batch." >&2
+      exit 81
+    fi
     ;;
   --permission-smoke|permission-smoke)
     "$root/scripts/permission_smoke.sh"
