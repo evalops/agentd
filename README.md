@@ -120,7 +120,11 @@ Secret Broker wrap request. Use this for non-secret correlation IDs such as
 `evalops_context_version`, `maestro_session_id`, `agent_run_id`,
 `tool_execution_id`, `trace_id`, `traceparent`, `task_id`, and `source_issue`;
 Platform preserves these as receipt evidence and Cerebro indexes them as
-Chronicle graph labels.
+Chronicle graph labels. agentd centralizes the `evalops.context.v1` keys in
+`EvalOpsContextMetadata`, preserving unknown keys while dropping malformed
+canonical values such as invalid `traceparent` strings. This mirrors the
+Platform envelope contract and Maestro emitter shape tracked in
+evalops/platform#1201 and evalops/maestro-internal#1538.
 
 Remote mode requires `localOnly: false`, an HTTPS or loopback endpoint, and an
 auth mode. Bearer auth references a Keychain item:

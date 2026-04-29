@@ -98,7 +98,10 @@ jobs:
       - name: Record checksums
         run: |
           set -euo pipefail
-          shasum -a 256 "dist/EvalOps agentd.app/Contents/MacOS/agentd" "dist/agentd.zip" "dist/update-channel.json" | tee dist/SHA256SUMS
+          (
+            cd dist
+            shasum -a 256 "EvalOps agentd.app/Contents/MacOS/agentd" "agentd.zip" "update-channel.json" | tee SHA256SUMS
+          )
           codesign -dvvv --entitlements :- "dist/EvalOps agentd.app" > dist/codesign.txt 2>&1
           spctl -a -t exec -vv "dist/EvalOps agentd.app" > dist/spctl.txt 2>&1
 

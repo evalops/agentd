@@ -30,10 +30,13 @@ struct SecretScrubber: Sendable {
       ("azure_storage_key", #"AccountKey=[A-Za-z0-9+/=]{86,90}"#),
       ("mailgun_key", #"\bkey-[0-9a-f]{32}\b"#),
       ("twilio_api_key", #"\bSK[a-f0-9]{32}\b"#),
-      ("discord_bot_token", #"\b[A-Za-z0-9_-]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b"#),
+      (
+        "discord_bot_token",
+        #"(?i)\b(?:discord|bot|token|authorization)[\w\s:="'-]{0,30}[A-Za-z0-9_-]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b"#
+      ),
       ("slack_bot", #"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"#),
       ("anthropic_key", #"\bsk-ant-[A-Za-z0-9-_]{20,}\b"#),
-      ("openai_key", #"\bsk-(?:proj-|svcacct-|admin-|None-)?[A-Za-z0-9]{32,}\b"#),
+      ("openai_key", #"\bsk-(?:proj-|svcacct-|admin-|None-)?[A-Za-z0-9_-]{32,}\b"#),
       ("stripe_live", #"\b(?:rk|sk)_live_[A-Za-z0-9]{20,}\b"#),
       ("pem_certreq", #"-----BEGIN\s+CERTIFICATE\s+REQUEST-----"#),
       ("password_field", #"(?i)\b(password|passwd|secret|api[_-]?key)\b\s*[:=]\s*\S{4,}"#),

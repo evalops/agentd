@@ -150,7 +150,7 @@ struct AgentConfig: Codable, Sendable {
     self.userId = userId
     self.projectId = projectId
     self.repository = repository
-    self.metadata = Self.cleanMetadata(metadata)
+    self.metadata = EvalOpsContextMetadata.clean(metadata)
     self.endpoint = endpoint
     self.allowedBundleIds = allowedBundleIds
     self.deniedBundleIds = deniedBundleIds
@@ -222,19 +222,6 @@ struct AgentConfig: Codable, Sendable {
     return merged
   }
 
-  private static func cleanMetadata(_ metadata: [String: String]) -> [String: String] {
-    var cleaned: [String: String] = [:]
-    for (rawKey, rawValue) in metadata {
-      let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
-      let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-      if key.isEmpty || value.isEmpty {
-        continue
-      }
-      cleaned[key] = value
-    }
-    return cleaned
-  }
-
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     deviceId = try container.decode(String.self, forKey: .deviceId)
@@ -246,7 +233,7 @@ struct AgentConfig: Codable, Sendable {
     userId = try container.decodeIfPresent(String.self, forKey: .userId)
     projectId = try container.decodeIfPresent(String.self, forKey: .projectId)
     repository = try container.decodeIfPresent(String.self, forKey: .repository)
-    metadata = Self.cleanMetadata(
+    metadata = EvalOpsContextMetadata.clean(
       try container.decodeIfPresent([String: String].self, forKey: .metadata) ?? [:]
     )
     endpoint = try container.decode(URL.self, forKey: .endpoint)

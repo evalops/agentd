@@ -142,6 +142,29 @@ final class SubmitterTests: XCTestCase {
       metadata["traceparent"], "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01")
   }
 
+  func testEvalOpsContextMetadataDropsMalformedCanonicalValuesAndPreservesUnknownKeys() throws {
+    let metadata = EvalOpsContextMetadata.clean([
+      " evalops_context_version ": " evalops.context.v1 ",
+      "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+      "custom": " kept ",
+      "bad_trace": "ignored",
+    ])
+
+    XCTAssertEqual(metadata["evalops_context_version"], "evalops.context.v1")
+    XCTAssertEqual(
+      metadata["traceparent"], "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01")
+    XCTAssertEqual(metadata["custom"], "kept")
+
+    let malformed = EvalOpsContextMetadata.clean([
+      "evalops_context_version": "evalops.context.v2",
+      "traceparent": "not-a-traceparent",
+      "custom": "kept",
+    ])
+    XCTAssertNil(malformed["evalops_context_version"])
+    XCTAssertNil(malformed["traceparent"])
+    XCTAssertEqual(malformed["custom"], "kept")
+  }
+
   func testAgentConfigDecodesSecretBroker() throws {
     let data = """
       {
@@ -534,6 +557,23 @@ final class SubmitterTests: XCTestCase {
     XCTAssertNotNil(root["batch"])
   }
 
+  func testLocalPersistFailureReturnsFailedInsteadOfPretendingQueued() async throws {
+    let dir = try makeTemporaryDirectory()
+    let occupiedPath = dir.appendingPathComponent("not-a-directory")
+    try Data("occupied".utf8).write(to: occupiedPath)
+    let submitter = try Submitter(
+      endpoint: URL(string: "http://127.0.0.1:8787/submit")!,
+      localOnly: true,
+      batchDirectory: occupiedPath
+    )
+
+    let result = await submitter.submit(Self.batch())
+
+    XCTAssertEqual(result, .failed)
+    let description = await submitter.lastSubmitResult()
+    XCTAssertEqual(description, "failed to persist local batch batch_fixture")
+  }
+
   func testEncryptedLocalBatchFailsClosedWithWrongKey() async throws {
     let dir = try makeTemporaryDirectory()
     let submitter = try Submitter(
@@ -700,6 +740,52 @@ final class SubmitterTests: XCTestCase {
     XCTAssertEqual(result, .submitted(nil))
     let submittedBatchIds = await recorder.values()
     XCTAssertEqual(submittedBatchIds, ["live_batch", "queued_batch"])
+    let remaining = try FileManager.default.contentsOfDirectory(
+      at: dir,
+      includingPropertiesForKeys: nil
+    )
+    XCTAssertTrue(remaining.isEmpty)
+  }
+
+  func testReplayDoesNotSweepUnsubmittedQueuedFilesDuringPass() async throws {
+    let dir = try makeTemporaryDirectory()
+    try writeBatchRequestFile(
+      dir.appendingPathComponent("oldest.json"),
+      batch: Self.batch(id: "oldest"),
+      modified: Date(timeIntervalSince1970: 1))
+    try writeBatchRequestFile(
+      dir.appendingPathComponent("middle.json"),
+      batch: Self.batch(id: "middle"),
+      modified: Date(timeIntervalSince1970: 2))
+    try writeBatchRequestFile(
+      dir.appendingPathComponent("newest.json"),
+      batch: Self.batch(id: "newest"),
+      modified: Date(timeIntervalSince1970: 3))
+
+    let recorder = StringRecorder()
+    let submitter = try Submitter(
+      endpoint: URL(string: "https://chronicle.example.com/submit")!,
+      localOnly: false,
+      authMode: .bearer(keychainService: "svc", keychainAccount: "acct"),
+      credentialProvider: StubCredentialProvider(token: "token"),
+      client: StubHTTPClient { request in
+        let body = try XCTUnwrap(request.httpBody)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let batch = try XCTUnwrap(root["batch"] as? [String: Any])
+        let batchId = try XCTUnwrap(batch["batchId"] as? String)
+        await recorder.record(batchId)
+        return (Data(), Self.response(for: request.url!, statusCode: 200))
+      },
+      batchDirectory: dir,
+      maxBatchBytes: 150,
+      maxBatchAgeDays: 365 * 100
+    )
+
+    let replay = await submitter.retryLocalBatches()
+
+    XCTAssertEqual(replay, LocalBatchReplayResult(submitted: 3, failed: 0))
+    let submittedBatchIds = await recorder.values()
+    XCTAssertEqual(submittedBatchIds, ["oldest", "middle", "newest"])
     let remaining = try FileManager.default.contentsOfDirectory(
       at: dir,
       includingPropertiesForKeys: nil
@@ -916,6 +1002,11 @@ final class SubmitterTests: XCTestCase {
 
   private func writeBatchFile(_ url: URL, bytes: Int, modified: Date) throws {
     try Data(repeating: 0x41, count: bytes).write(to: url)
+    try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+  }
+
+  private func writeBatchRequestFile(_ url: URL, batch: Batch, modified: Date) throws {
+    try encodeSubmitBatchRequest(batch, localOnly: false).write(to: url)
     try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
   }
 

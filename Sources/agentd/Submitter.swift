@@ -111,7 +111,10 @@ actor Submitter {
     }
 
     if localOnly {
-      await persistLocal(batch.batchId, data: fallbackData)
+      guard await persistLocal(batch.batchId, data: fallbackData) else {
+        lastResultDescription = "failed to persist local batch \(batch.batchId)"
+        return .failed
+      }
       lastResultDescription = "persisted local batch \(batch.batchId)"
       return .persistedLocal
     }
@@ -123,7 +126,10 @@ actor Submitter {
       Log.submit.warning(
         "remote submit prepare failed batch=\(batch.batchId, privacy: .public) error=\(error.localizedDescription, privacy: .public) — falling back to local"
       )
-      await persistLocal(batch.batchId, data: fallbackData)
+      guard await persistLocal(batch.batchId, data: fallbackData) else {
+        lastResultDescription = "failed to persist local fallback batch \(batch.batchId)"
+        return .failed
+      }
       lastResultDescription = "persisted local fallback batch \(batch.batchId)"
       return .persistedLocal
     }
@@ -140,7 +146,10 @@ actor Submitter {
       return result
     }
 
-    await persistLocal(batch.batchId, data: fallbackData)
+    guard await persistLocal(batch.batchId, data: fallbackData) else {
+      lastResultDescription = "failed to persist local fallback batch \(batch.batchId)"
+      return .failed
+    }
     lastResultDescription = "persisted local fallback batch \(batch.batchId)"
     return .persistedLocal
   }
@@ -158,7 +167,11 @@ actor Submitter {
     )
   }
 
-  private func submitRemoteData(_ data: Data, batchId: String) async -> SubmitResult {
+  private func submitRemoteData(
+    _ data: Data,
+    batchId: String,
+    sweepAfterSuccess: Bool = true
+  ) async -> SubmitResult {
     let req = makeRequest(body: data)
     do {
       let (body, resp) = try await client.data(for: req)
@@ -184,7 +197,9 @@ actor Submitter {
         Log.submit.info(
           "submit ok batch=\(batchId, privacy: .public)"
         )
-        await sweepLocalBatches()
+        if sweepAfterSuccess {
+          await sweepLocalBatches()
+        }
         return .submitted(response)
       }
     } catch {
@@ -222,35 +237,7 @@ actor Submitter {
     guard let payloadJSON = String(data: payload, encoding: .utf8) else {
       throw SubmitterError.invalidBatchPayload
     }
-    var metadata = batch.metadata
-    for reservedKey in [
-      "batch_id",
-      "device_id",
-      "organization_id",
-      "workspace_id",
-      "user_id",
-      "project_id",
-      "repository",
-      "source",
-    ] {
-      metadata.removeValue(forKey: reservedKey)
-    }
-    metadata["batch_id"] = batch.batchId
-    metadata["device_id"] = batch.deviceId
-    metadata["organization_id"] = batch.organizationId
-    if let workspaceId = batch.workspaceId {
-      metadata["workspace_id"] = workspaceId
-    }
-    if let userId = batch.userId {
-      metadata["user_id"] = userId
-    }
-    if let projectId = batch.projectId {
-      metadata["project_id"] = projectId
-    }
-    if let repository = batch.repository {
-      metadata["repository"] = repository
-    }
-    metadata["source"] = "agentd"
+    let metadata = EvalOpsContextMetadata.frameBatchMetadata(base: batch.metadata, batch: batch)
 
     let request = WrapArtifactRequest(
       sessionToken: secretBroker.sessionToken,
@@ -276,8 +263,15 @@ actor Submitter {
     return WrappedArtifact(artifactId: wrapped.artifactId, grantId: wrapped.grantId)
   }
 
-  private func persistLocal(_ id: String, data: Data) async {
-    try? FileManager.default.createDirectory(at: batchDirectory, withIntermediateDirectories: true)
+  private func persistLocal(_ id: String, data: Data) async -> Bool {
+    do {
+      try FileManager.default.createDirectory(at: batchDirectory, withIntermediateDirectories: true)
+    } catch {
+      Log.submit.error(
+        "local batch directory create failed id=\(id, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
+      return false
+    }
     let url: URL
     let dataToWrite: Data
     if let localBatchCryptor {
@@ -290,16 +284,24 @@ actor Submitter {
         Log.submit.error(
           "local batch encrypt failed id=\(id, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
         )
-        return
+        return false
       }
     } else {
       dataToWrite = data
       url = batchDirectory.appendingPathComponent("\(id).json")
     }
-    try? dataToWrite.write(to: url, options: .atomic)
-    try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    do {
+      try dataToWrite.write(to: url, options: .atomic)
+      try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    } catch {
+      Log.submit.error(
+        "local batch write failed id=\(id, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
+      return false
+    }
     Log.submit.info("local persist \(url.path, privacy: .public)")
     await sweepLocalBatches()
+    return true
   }
 
   func retryLocalBatches() async -> LocalBatchReplayResult {
@@ -351,7 +353,11 @@ actor Submitter {
         continue
       }
 
-      let result = await submitRemoteData(submitData, batchId: file.batchId)
+      let result = await submitRemoteData(
+        submitData,
+        batchId: file.batchId,
+        sweepAfterSuccess: false
+      )
       switch result {
       case .submitted:
         try? FileManager.default.removeItem(at: file.url)

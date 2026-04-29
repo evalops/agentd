@@ -45,10 +45,11 @@ final class SecretScrubberTests: XCTestCase {
       ("twilio_api_key", "SK" + String(repeating: "a", count: 32)),
       (
         "discord_bot_token",
-        String(repeating: "A", count: 24) + "." + String(repeating: "B", count: 6) + "."
+        "discord_token=" + String(repeating: "A", count: 24) + "."
+          + String(repeating: "B", count: 6) + "."
           + String(repeating: "C", count: 27)
       ),
-      ("openai_key", "sk-proj-" + String(repeating: "A", count: 32)),
+      ("openai_key", "sk-proj-" + String(repeating: "A_", count: 16)),
     ]
 
     for (reason, token) in fixtures {
@@ -58,6 +59,13 @@ final class SecretScrubberTests: XCTestCase {
 
   func testOpenAIKeyPatternAvoidsShortSkNoise() {
     XCTAssertEqual(SecretScrubber.evaluate("not a provider key: sk-demo"), .clean)
+  }
+
+  func testDiscordPatternRequiresProviderContext() {
+    let dotted =
+      String(repeating: "A", count: 24) + "." + String(repeating: "B", count: 6) + "."
+      + String(repeating: "C", count: 27)
+    XCTAssertEqual(SecretScrubber.evaluate("ordinary dotted identifier \(dotted)"), .clean)
   }
 
   func testPathPolicyDeniesSshAndAws() {
