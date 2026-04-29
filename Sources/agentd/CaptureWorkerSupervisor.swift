@@ -117,11 +117,17 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
 
     let pid = target.processIdentifier
     Log.capture.info("terminating capture worker safely with TERM pid=\(pid, privacy: .public)")
-    target.terminate()
+    let termSent = target.isRunning && Darwin.kill(pid, SIGTERM) == 0
     let exitedAfterTerm = Self.wait(for: target, timeoutSeconds: max(0, graceSeconds))
     if exitedAfterTerm {
       Log.capture.info("capture worker terminated safely with TERM pid=\(pid, privacy: .public)")
-      return recordTermination(process: target, pid: pid, killSent: false, exited: true)
+      return recordTermination(
+        process: target,
+        pid: pid,
+        termSent: termSent,
+        killSent: false,
+        exited: true
+      )
     }
 
     Log.capture.error(
@@ -133,7 +139,13 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
         "capture worker forcefully terminated pid=\(pid, privacy: .public)"
       )
     }
-    return recordTermination(process: target, pid: pid, killSent: true, exited: exitedAfterKill)
+    return recordTermination(
+      process: target,
+      pid: pid,
+      termSent: termSent,
+      killSent: true,
+      exited: exitedAfterKill
+    )
   }
 
   func waitForExit(timeoutSeconds: TimeInterval) -> CaptureWorkerTerminationResult? {
@@ -193,13 +205,13 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
   }
 
   private static func wait(for process: Process, timeoutSeconds: TimeInterval) -> Bool {
-    guard process.isRunning else { return true }
-    let group = DispatchGroup()
-    group.enter()
-    DispatchQueue.global(qos: .utility).async {
-      process.waitUntilExit()
-      group.leave()
+    let deadline = Date().addingTimeInterval(max(0, timeoutSeconds))
+    while process.isRunning {
+      let remaining = deadline.timeIntervalSinceNow
+      guard remaining > 0 else { return false }
+      Thread.sleep(forTimeInterval: min(0.01, remaining))
     }
-    return group.wait(timeout: .now() + timeoutSeconds) == .success
+    process.waitUntilExit()
+    return true
   }
 }
