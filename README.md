@@ -108,6 +108,11 @@ scripts/permission_smoke.sh --no-launch # generate permission-smoke evidence tem
 ./script/build_and_run.sh --local-batch-verify # verify sanitized local batch output
 ```
 
+The diagnostic subcommands emit bounded JSON for local support. `list-displays`
+uses CoreGraphics/NSScreen display metadata instead of ScreenCaptureKit
+discovery, and `list-displays` / `selftest` include structured probe status when
+permission preflight or display discovery times out.
+
 First run will trigger the system Screen Recording and Accessibility prompts the
 first time the gated APIs are called. Grant both in System Settings → Privacy &
 Security. If capture starts before the grants are complete, agentd retries

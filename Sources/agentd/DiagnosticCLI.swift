@@ -4,6 +4,108 @@ import AppKit
 import Foundation
 @preconcurrency import ScreenCaptureKit
 
+struct DiagnosticProbeStatus: Codable, Equatable, Sendable {
+  let timedOut: Bool
+  let unavailableReason: String?
+
+  static let available = DiagnosticProbeStatus(timedOut: false, unavailableReason: nil)
+
+  static func timedOut(_ reason: String) -> DiagnosticProbeStatus {
+    DiagnosticProbeStatus(timedOut: true, unavailableReason: reason)
+  }
+
+  static func unavailable(_ reason: String) -> DiagnosticProbeStatus {
+    DiagnosticProbeStatus(timedOut: false, unavailableReason: reason)
+  }
+}
+
+struct DiagnosticPermissionSnapshot: Codable, Equatable, Sendable {
+  let accessibilityTrusted: Bool
+  let screenCaptureTrusted: Bool?
+  let screenCaptureProbe: DiagnosticProbeStatus
+
+  @MainActor
+  static func current(
+    promptForAccessibility: Bool,
+    screenCaptureTimeoutSeconds: TimeInterval = 1.5,
+    screenCapturePreflight: @escaping @Sendable () throws -> Bool = {
+      CGPreflightScreenCaptureAccess()
+    }
+  ) -> DiagnosticPermissionSnapshot {
+    let accessibilityTrusted =
+      promptForAccessibility
+      ? WindowContextProbe.axTrustedPrompt()
+      : AXIsProcessTrusted()
+    switch DiagnosticProbeRunner.runBlocking(
+      timeoutSeconds: screenCaptureTimeoutSeconds,
+      operation: screenCapturePreflight
+    ) {
+    case .success(let trusted):
+      return DiagnosticPermissionSnapshot(
+        accessibilityTrusted: accessibilityTrusted,
+        screenCaptureTrusted: trusted,
+        screenCaptureProbe: .available
+      )
+    case .failure(let error):
+      return DiagnosticPermissionSnapshot(
+        accessibilityTrusted: accessibilityTrusted,
+        screenCaptureTrusted: nil,
+        screenCaptureProbe: .unavailable(error)
+      )
+    case .timedOut:
+      return DiagnosticPermissionSnapshot(
+        accessibilityTrusted: accessibilityTrusted,
+        screenCaptureTrusted: nil,
+        screenCaptureProbe: .timedOut("screen capture permission preflight timed out")
+      )
+    }
+  }
+}
+
+enum TimedDiagnosticResult<T: Sendable>: Sendable {
+  case success(T)
+  case failure(String)
+  case timedOut
+}
+
+private final class DiagnosticResultBox<T: Sendable>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var result: TimedDiagnosticResult<T>?
+
+  func store(_ next: TimedDiagnosticResult<T>) {
+    lock.withLock {
+      guard result == nil else { return }
+      result = next
+    }
+  }
+
+  func snapshot() -> TimedDiagnosticResult<T>? {
+    lock.withLock { result }
+  }
+}
+
+enum DiagnosticProbeRunner {
+  static func runBlocking<T: Sendable>(
+    timeoutSeconds: TimeInterval,
+    operation: @escaping @Sendable () throws -> T
+  ) -> TimedDiagnosticResult<T> {
+    let box = DiagnosticResultBox<T>()
+    let group = DispatchGroup()
+    group.enter()
+    DispatchQueue.global(qos: .utility).async {
+      defer { group.leave() }
+      do {
+        box.store(.success(try operation()))
+      } catch {
+        box.store(.failure(error.localizedDescription))
+      }
+    }
+    let deadline = DispatchTime.now() + max(0, timeoutSeconds)
+    guard group.wait(timeout: deadline) == .success else { return .timedOut }
+    return box.snapshot() ?? .timedOut
+  }
+}
+
 enum DiagnosticCLI {
   static let handledCommands = [
     "list-displays", "capture-once", "selftest", "help", "--help", "-h",
@@ -21,7 +123,7 @@ enum DiagnosticCLI {
       case .help:
         FileHandle.standardOutput.writeString(help)
       case .listDisplays:
-        let payload = try await DisplayDiagnostics.snapshot()
+        let payload = await DisplayDiagnostics.snapshot()
         try writeJSON(payload, to: nil)
       case .captureOnce(let options):
         if options.noScrub {
@@ -145,6 +247,7 @@ enum DiagnosticCLIError: Error, LocalizedError {
   case timeout
   case noWindowContext
   case noBatchProduced
+  case displayProbeFailed(String)
   case unscrubbedCaptureUnavailable
 
   var errorDescription: String? {
@@ -157,6 +260,8 @@ enum DiagnosticCLIError: Error, LocalizedError {
       return "could not read frontmost window context; grant Accessibility permission and retry"
     case .noBatchProduced:
       return "capture produced no batch; privacy filters may have dropped the frame"
+    case .displayProbeFailed(let message):
+      return message
     case .unscrubbedCaptureUnavailable:
       return
         "--no-scrub is recognized but intentionally unavailable; diagnostic captures stay scrubbed"
@@ -169,13 +274,14 @@ enum DiagnosticCLIError: Error, LocalizedError {
   }
 }
 
-struct DisplayDiagnosticsSnapshot: Codable {
+struct DisplayDiagnosticsSnapshot: Codable, Sendable {
   let generatedAt: Date
-  let permissions: PermissionSnapshot
+  let permissions: DiagnosticPermissionSnapshot
+  let displayProbe: DiagnosticProbeStatus
   let displays: [DisplayDiagnostic]
 }
 
-struct DisplayDiagnostic: Codable, Equatable {
+struct DisplayDiagnostic: Codable, Equatable, Sendable {
   let displayId: UInt32
   let name: String
   let width: Int
@@ -185,7 +291,7 @@ struct DisplayDiagnostic: Codable, Equatable {
   let bounds: DisplayBounds
 }
 
-struct DisplayBounds: Codable, Equatable {
+struct DisplayBounds: Codable, Equatable, Sendable {
   let x: Double
   let y: Double
   let width: Double
@@ -194,38 +300,103 @@ struct DisplayBounds: Codable, Equatable {
 
 enum DisplayDiagnostics {
   @MainActor
-  static func snapshot() async throws -> DisplayDiagnosticsSnapshot {
-    let content = try await SCShareableContent.excludingDesktopWindows(
-      true, onScreenWindowsOnly: true
-    )
-    let displays = content.displays.sorted { $0.displayID < $1.displayID }.map { display in
-      DisplayDiagnostic(
-        displayId: display.displayID,
-        name: displayName(display.displayID),
-        width: display.width,
-        height: display.height,
-        scale: displayScale(display.displayID),
-        isMain: display.displayID == CGMainDisplayID(),
-        bounds: DisplayBounds(
-          x: display.frame.origin.x,
-          y: display.frame.origin.y,
-          width: display.frame.width,
-          height: display.frame.height
-        )
-      )
+  static func snapshot(
+    probe: any DisplayDiagnosticsProbing = SystemDisplayDiagnosticsProbe(),
+    timeoutNanoseconds: UInt64 = 2_000_000_000
+  ) async -> DisplayDiagnosticsSnapshot {
+    let probeResult = await runProbe(probe, timeoutNanoseconds: timeoutNanoseconds)
+    let displays: [DisplayDiagnostic]
+    let displayProbe: DiagnosticProbeStatus
+    switch probeResult {
+    case .success(let value):
+      displays = value
+      displayProbe = .available
+    case .failure(let error):
+      displays = []
+      displayProbe = .unavailable(error)
+    case .timedOut:
+      displays = []
+      displayProbe = .timedOut("display discovery timed out")
     }
     return DisplayDiagnosticsSnapshot(
       generatedAt: Date(),
-      permissions: PermissionSnapshot.current(promptForAccessibility: false),
+      permissions: DiagnosticPermissionSnapshot.current(promptForAccessibility: false),
+      displayProbe: displayProbe,
       displays: displays
     )
   }
 
   static func availableDisplayIds() async throws -> Set<UInt32> {
-    let content = try await SCShareableContent.excludingDesktopWindows(
-      true, onScreenWindowsOnly: true
-    )
-    return Set(content.displays.map(\.displayID))
+    try await MainActor.run {
+      Set(try SystemDisplayDiagnosticsProbe.systemDisplays().map(\.displayId))
+    }
+  }
+
+  private static func runProbe(
+    _ probe: any DisplayDiagnosticsProbing,
+    timeoutNanoseconds: UInt64
+  ) async -> TimedDiagnosticResult<[DisplayDiagnostic]> {
+    await withTaskGroup(of: TimedDiagnosticResult<[DisplayDiagnostic]>.self) { group in
+      group.addTask {
+        do {
+          return .success(try await probe.displays())
+        } catch {
+          return .failure(error.localizedDescription)
+        }
+      }
+      group.addTask {
+        try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+        return .timedOut
+      }
+      let result = await group.next() ?? .timedOut
+      group.cancelAll()
+      return result
+    }
+  }
+}
+
+protocol DisplayDiagnosticsProbing: Sendable {
+  func displays() async throws -> [DisplayDiagnostic]
+}
+
+struct SystemDisplayDiagnosticsProbe: DisplayDiagnosticsProbing {
+  func displays() async throws -> [DisplayDiagnostic] {
+    try await MainActor.run {
+      try Self.systemDisplays()
+    }
+  }
+
+  @MainActor
+  static func systemDisplays() throws -> [DisplayDiagnostic] {
+    var count: UInt32 = 0
+    let countError = CGGetActiveDisplayList(0, nil, &count)
+    guard countError == .success else {
+      throw DiagnosticCLIError.displayProbeFailed("CGGetActiveDisplayList count failed")
+    }
+    var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+    let listError = CGGetActiveDisplayList(count, &ids, &count)
+    guard listError == .success else {
+      throw DiagnosticCLIError.displayProbeFailed("CGGetActiveDisplayList display list failed")
+    }
+    return ids.prefix(Int(count)).sorted().map { displayId in
+      DisplayDiagnostic(
+        displayId: displayId,
+        name: Self.displayName(displayId),
+        width: CGDisplayPixelsWide(displayId),
+        height: CGDisplayPixelsHigh(displayId),
+        scale: Self.displayScale(displayId),
+        isMain: displayId == CGMainDisplayID(),
+        bounds: {
+          let bounds = CGDisplayBounds(displayId)
+          return DisplayBounds(
+            x: bounds.origin.x,
+            y: bounds.origin.y,
+            width: bounds.width,
+            height: bounds.height
+          )
+        }()
+      )
+    }
   }
 
   private static func displayName(_ displayId: CGDirectDisplayID) -> String {
@@ -238,7 +409,7 @@ enum DisplayDiagnostics {
     return "Display \(displayId)"
   }
 
-  static func displayScale(_ displayId: CGDirectDisplayID) -> Double? {
+  private static func displayScale(_ displayId: CGDirectDisplayID) -> Double? {
     let pixelWidth = CGDisplayPixelsWide(displayId)
     guard pixelWidth > 0 else { return nil }
     let boundsWidth = CGDisplayBounds(displayId).width
@@ -249,7 +420,7 @@ enum DisplayDiagnostics {
 
 struct CaptureOnceOutput: Codable {
   let generatedAt: Date
-  let permissions: PermissionSnapshot
+  let permissions: DiagnosticPermissionSnapshot
   let batch: Batch
 }
 
@@ -282,7 +453,7 @@ enum CaptureOnceDiagnostics {
     return CaptureOnceOutput(
       generatedAt: Date(),
       permissions: await MainActor.run {
-        PermissionSnapshot.current(promptForAccessibility: false)
+        DiagnosticPermissionSnapshot.current(promptForAccessibility: false)
       },
       batch: batch
     )
@@ -334,7 +505,9 @@ struct EmptyOCR: OCRRecognizing {
 
 struct SelftestOutput: Codable {
   let generatedAt: Date
-  let permissions: PermissionSnapshot
+  let permissions: DiagnosticPermissionSnapshot
+  let displayProbe: DiagnosticProbeStatus
+  let displayCount: Int
   let configPath: String
   let runtimeLockPath: String
   let mockChronicle: SelftestCommandResult?
@@ -347,10 +520,19 @@ struct SelftestCommandResult: Codable {
 
 enum SelftestDiagnostics {
   @MainActor
-  static func run() -> SelftestOutput {
-    SelftestOutput(
+  static func run(
+    displayProbe: any DisplayDiagnosticsProbing = SystemDisplayDiagnosticsProbe(),
+    displayTimeoutNanoseconds: UInt64 = 2_000_000_000
+  ) async -> SelftestOutput {
+    let displaySnapshot = await DisplayDiagnostics.snapshot(
+      probe: displayProbe,
+      timeoutNanoseconds: displayTimeoutNanoseconds
+    )
+    return SelftestOutput(
       generatedAt: Date(),
-      permissions: PermissionSnapshot.current(promptForAccessibility: false),
+      permissions: DiagnosticPermissionSnapshot.current(promptForAccessibility: false),
+      displayProbe: displaySnapshot.displayProbe,
+      displayCount: displaySnapshot.displays.count,
       configPath: ConfigStore.path.path,
       runtimeLockPath: AgentdRuntimeLock.lockURL.path,
       mockChronicle: runMockChronicleIfAvailable()
