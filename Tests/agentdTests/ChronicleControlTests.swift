@@ -170,6 +170,27 @@ final class ChronicleControlTests: XCTestCase {
     XCTAssertEqual(second.batchIntervalSeconds, 45)
   }
 
+  func testCapturePolicyCanSelectDisplayScope() throws {
+    let data = """
+      {
+        "policyVersion": "policy_display",
+        "captureAllDisplays": true,
+        "selectedDisplayIds": [123, 456]
+      }
+      """.data(using: .utf8)!
+
+    let policy = try JSONDecoder().decode(CapturePolicy.self, from: data)
+    var cfg = PipelineTests.config()
+    cfg.captureAllDisplays = false
+    cfg.selectedDisplayIds = []
+
+    let next = cfg.applying(policy: policy)
+
+    XCTAssertEqual(policy.selectedDisplayIds, [123, 456])
+    XCTAssertEqual(next.captureAllDisplays, true)
+    XCTAssertEqual(next.selectedDisplayIds, [123, 456])
+  }
+
   func testControlStateReportsDevicePauseChangesWithoutPolicy() {
     var state = ChronicleControlState()
 

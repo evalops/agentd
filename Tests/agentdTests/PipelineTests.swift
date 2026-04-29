@@ -283,6 +283,33 @@ final class PipelineTests: XCTestCase {
     XCTAssertGreaterThan(dropped, 0)
   }
 
+  func testDisplaySelectionPrefersExplicitIdsThenAllThenPrimary() {
+    XCTAssertEqual(
+      DisplaySelection.selectedDisplayIds(
+        available: [10, 20, 30],
+        captureAllDisplays: true,
+        selectedDisplayIds: [20, 99, 20]
+      ),
+      [20]
+    )
+    XCTAssertEqual(
+      DisplaySelection.selectedDisplayIds(
+        available: [10, 20, 30],
+        captureAllDisplays: true,
+        selectedDisplayIds: []
+      ),
+      [10, 20, 30]
+    )
+    XCTAssertEqual(
+      DisplaySelection.selectedDisplayIds(
+        available: [10, 20, 30],
+        captureAllDisplays: false,
+        selectedDisplayIds: []
+      ),
+      [10]
+    )
+  }
+
   static func config(maxFramesPerBatch: Int = 24, maxOcrTextChars: Int = 4096) -> AgentConfig {
     AgentConfig(
       deviceId: "device_1",

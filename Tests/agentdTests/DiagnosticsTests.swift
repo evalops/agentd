@@ -46,6 +46,18 @@ final class DiagnosticsTests: XCTestCase {
           encrypted: true
         )
       ],
+      captureDisplayStats: [
+        CaptureDisplayStats(
+          displayId: 42,
+          widthPx: 3024,
+          heightPx: 1964,
+          displayScale: 2.0,
+          mainDisplay: true,
+          framesEnqueued: 12,
+          framesDropped: 1,
+          lastFrameAt: Date(timeIntervalSince1970: 3)
+        )
+      ],
       lastSubmitResult: "persisted local fallback batch batch_1"
     )
 
@@ -59,5 +71,7 @@ final class DiagnosticsTests: XCTestCase {
     XCTAssertFalse(report.contains(SecretScrubberTests.jwtFixture()))
     XCTAssertTrue(report.contains("[redacted]"))
     XCTAssertTrue(report.contains("~/.ssh"))
+    XCTAssertTrue(report.contains("Capture all displays: false"))
+    XCTAssertTrue(report.contains("| 42 | 3024x1964 | 2.00 | true | 12 | 1 |"))
   }
 }

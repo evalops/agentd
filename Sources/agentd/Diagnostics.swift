@@ -14,6 +14,7 @@ struct DiagnosticsSnapshot: Sendable {
   let pendingStats: PendingFrameStats
   let localBatchStats: LocalBatchStats
   let localBatches: [LocalBatchSummary]
+  let captureDisplayStats: [CaptureDisplayStats]
   let lastSubmitResult: String?
 }
 
@@ -43,6 +44,10 @@ enum DiagnosticsReport {
     lines.append("")
     lines.append("- Allowed bundles: \(snapshot.config.allowedBundleIds.count)")
     lines.append("- Denied bundles: \(snapshot.config.deniedBundleIds.count)")
+    lines.append("- Capture all displays: \(snapshot.config.captureAllDisplays)")
+    lines.append(
+      "- Selected display ids: \(snapshot.config.selectedDisplayIds.map(String.init).joined(separator: ", ").nilIfEmpty ?? "none")"
+    )
     lines.append(
       "- Denied path prefixes: \(snapshot.config.deniedPathPrefixes.map(redactPath).joined(separator: ", "))"
     )
@@ -53,6 +58,23 @@ enum DiagnosticsReport {
     lines.append("- Max frames per batch: \(snapshot.config.maxFramesPerBatch)")
     lines.append("- Max OCR text chars: \(snapshot.config.maxOcrTextChars)")
     lines.append("- Adaptive OCR min chars: \(snapshot.config.adaptiveOcrMinChars)")
+    lines.append("")
+    lines.append("## Capture Displays")
+    lines.append("")
+    if snapshot.captureDisplayStats.isEmpty {
+      lines.append("No active capture displays.")
+    } else {
+      lines.append("| Display | Size | Scale | Main | Frames | Drops | Last frame |")
+      lines.append("| ---: | --- | ---: | --- | ---: | ---: | --- |")
+      for display in snapshot.captureDisplayStats {
+        let size = "\(display.widthPx)x\(display.heightPx)"
+        let scale = display.displayScale.map { String(format: "%.2f", $0) } ?? "unknown"
+        let lastFrame = display.lastFrameAt.map(iso) ?? "none"
+        lines.append(
+          "| \(display.displayId) | \(size) | \(scale) | \(display.mainDisplay) | \(display.framesEnqueued) | \(display.framesDropped) | \(lastFrame) |"
+        )
+      }
+    }
     lines.append("")
     lines.append("## Queued Batches")
     lines.append("")
@@ -117,5 +139,11 @@ enum DiagnosticsReport {
     formatter.timeZone = TimeZone(secondsFromGMT: 0)
     formatter.dateFormat = "yyyyMMdd-HHmmss"
     return formatter.string(from: date)
+  }
+}
+
+extension String {
+  fileprivate var nilIfEmpty: String? {
+    isEmpty ? nil : self
   }
 }
