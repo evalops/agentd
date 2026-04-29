@@ -411,6 +411,61 @@ final class PipelineTests: XCTestCase {
     XCTAssertTrue(ocrText.contains("debuggable text"))
   }
 
+  func testSparseFrameVisualRedactorMasksNormalizedVisionBox() {
+    let image = Self.image(bits: UInt64.max)
+    let redacted = SparseFrameVisualRedactor.mask(
+      image: image,
+      regions: [
+        OCRTextRegion(normalizedBoundingBox: CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+      ],
+      paddingPixels: 0
+    )
+
+    let center = Self.pixel(redacted, x: 4, y: 4)
+    XCTAssertLessThan(center.red, 10)
+    XCTAssertLessThan(center.green, 10)
+    XCTAssertLessThan(center.blue, 10)
+
+    let corner = Self.pixel(redacted, x: 0, y: 0)
+    XCTAssertGreaterThan(corner.red, 240)
+    XCTAssertGreaterThan(corner.green, 240)
+    XCTAssertGreaterThan(corner.blue, 240)
+  }
+
+  func testSparseFrameStoreCanOptIntoVisualRedactionMetadata() async throws {
+    let root = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var cfg = Self.config()
+    cfg.sparseFrameStorageRoot = root.path
+    cfg.sparseFrameVisualRedactionEnabled = true
+
+    let recorder = BatchRecorder()
+    let pipeline = FramePipeline(
+      config: cfg,
+      ocr: StubOCR(
+        text: "visible work context",
+        regions: [
+          OCRTextRegion(
+            normalizedBoundingBox: CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        ]
+      )
+    ) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(Self.frame(bits: UInt64.max), context: Self.context())
+
+    let metadataFile = try XCTUnwrap(
+      try FileManager.default.contentsOfDirectory(atPath: root.path).first {
+        $0.hasSuffix(".capture.json")
+      })
+    let metadata = try String(
+      contentsOf: root.appendingPathComponent(metadataFile),
+      encoding: .utf8
+    )
+    XCTAssertTrue(metadata.contains(#""visualRedactionEnabled":true"#))
+  }
+
   func testSparseFrameStoreKeepsSessionAcrossUnchangedConfigRefresh() async throws {
     let root = try Self.temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -647,6 +702,22 @@ final class PipelineTests: XCTestCase {
     return context.makeImage()!
   }
 
+  static func pixel(_ image: CGImage, x: Int, y: Int) -> (red: UInt8, green: UInt8, blue: UInt8) {
+    var pixel = [UInt8](repeating: 0, count: 4)
+    let context = CGContext(
+      data: &pixel,
+      width: 1,
+      height: 1,
+      bitsPerComponent: 8,
+      bytesPerRow: 4,
+      space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )!
+    context.translateBy(x: -CGFloat(x), y: -CGFloat(y))
+    context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    return (pixel[0], pixel[1], pixel[2])
+  }
+
   static func temporaryDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -680,14 +751,16 @@ actor BatchRecorder {
 struct StubOCR: OCRRecognizing {
   let text: String
   let confidence: Float
+  let regions: [OCRTextRegion]
 
-  init(text: String, confidence: Float = 0.9) {
+  init(text: String, confidence: Float = 0.9, regions: [OCRTextRegion] = []) {
     self.text = text
     self.confidence = confidence
+    self.regions = regions
   }
 
   func recognize(cgImage: CGImage) async throws -> OCRResult {
-    OCRResult(text: text, confidence: confidence, language: "en")
+    OCRResult(text: text, confidence: confidence, language: "en", regions: regions)
   }
 }
 

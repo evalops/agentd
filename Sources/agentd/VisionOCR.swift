@@ -4,10 +4,27 @@ import CoreGraphics
 import Foundation
 import Vision
 
+struct OCRTextRegion: Sendable, Equatable {
+  let normalizedBoundingBox: CGRect
+}
+
 struct OCRResult: Sendable {
   let text: String
   let confidence: Float
   let language: String?
+  let regions: [OCRTextRegion]
+
+  init(
+    text: String,
+    confidence: Float,
+    language: String?,
+    regions: [OCRTextRegion] = []
+  ) {
+    self.text = text
+    self.confidence = confidence
+    self.language = language
+    self.regions = regions
+  }
 }
 
 actor VisionOCR: OCRRecognizing {
@@ -20,11 +37,13 @@ actor VisionOCR: OCRRecognizing {
         }
         let observations = (req.results as? [VNRecognizedTextObservation]) ?? []
         var lines: [String] = []
+        var regions: [OCRTextRegion] = []
         var confSum: Float = 0
         var confN: Int = 0
         for obs in observations {
           guard let candidate = obs.topCandidates(1).first else { continue }
           lines.append(candidate.string)
+          regions.append(OCRTextRegion(normalizedBoundingBox: obs.boundingBox))
           confSum += candidate.confidence
           confN += 1
         }
@@ -36,7 +55,8 @@ actor VisionOCR: OCRRecognizing {
           returning: OCRResult(
             text: lines.joined(separator: "\n"),
             confidence: conf,
-            language: detectedLang
+            language: detectedLang,
+            regions: regions
           ))
       }
       request.recognitionLevel = .accurate

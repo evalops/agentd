@@ -79,6 +79,9 @@ enum DiagnosticsReport {
     lines.append(
       "- Event capture idle fallback seconds: \(snapshot.config.eventCaptureIdleFallbackSeconds)"
     )
+    lines.append(
+      "- Sparse frame visual redaction: \(snapshot.config.sparseFrameVisualRedactionEnabled)"
+    )
     lines.append("")
     lines.append("## Event Capture")
     lines.append("")

@@ -15,6 +15,7 @@ The report includes:
 - OCR cache entry, hit-rate, miss, and eviction counters;
 - event-capture trigger counts, debounce/min-gap suppressions, and one-shot
   capture success/failure counts;
+- sparse-frame visual-redaction enabled/disabled state;
 - queued batch id, modification time, size, and encryption state.
 
 The report omits OCR text and raw queued payloads. It strips endpoint query

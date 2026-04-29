@@ -10,13 +10,20 @@ actor SparseFrameStore {
   private let root: URL
   private let retentionHours: Double
   private let includeOcrText: Bool
+  private let visualRedactionEnabled: Bool
   private var sessions: [UInt32: SparseFrameSession] = [:]
   private let jsonEncoder: JSONEncoder
 
-  init(root: URL, retentionHours: Double = 6, includeOcrText: Bool = false) {
+  init(
+    root: URL,
+    retentionHours: Double = 6,
+    includeOcrText: Bool = false,
+    visualRedactionEnabled: Bool = false
+  ) {
     self.root = root
     self.retentionHours = max(0, retentionHours)
     self.includeOcrText = includeOcrText
+    self.visualRedactionEnabled = visualRedactionEnabled
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     encoder.outputFormatting = [.sortedKeys]
@@ -26,9 +33,13 @@ actor SparseFrameStore {
   func record(image: CGImage, processed: ProcessedFrame) throws {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     var session = try sessions[processed.displayId] ?? createSession(for: processed)
+    let storageImage =
+      visualRedactionEnabled
+      ? SparseFrameVisualRedactor.mask(image: image, regions: processed.ocrTextRegions)
+      : image
 
     let latestURL = session.latestURL
-    try writeJPEG(image, to: latestURL)
+    try writeJPEG(storageImage, to: latestURL)
 
     let normalizedText = normalize(processed.ocrText)
     let textHash = sha256Hex(normalizedText)
@@ -43,7 +54,7 @@ actor SparseFrameStore {
       session.lastHistoricalFrameAt = processed.capturedAt
       let frameURL = session.directory.appendingPathComponent(
         "frame-\(frameIndex)-\(minuteBucket(processed.capturedAt))Z.jpg")
-      try writeJPEG(image, to: frameURL)
+      try writeJPEG(storageImage, to: frameURL)
 
       if materialTextChange {
         session.lastOcrHash = textHash
@@ -86,7 +97,8 @@ actor SparseFrameStore {
       widthPx: processed.widthPx,
       heightPx: processed.heightPx,
       retentionHours: retentionHours,
-      includesRawOcrText: includeOcrText
+      includesRawOcrText: includeOcrText,
+      visualRedactionEnabled: visualRedactionEnabled
     )
     try jsonEncoder.encode(metadata).write(to: metadataURL, options: .atomic)
     try? FileManager.default.setAttributes(
@@ -175,6 +187,60 @@ struct SparseFrameStoreOptions: Sendable, Equatable {
   let root: URL
   let retentionHours: Double
   let includeOcrText: Bool
+  let visualRedactionEnabled: Bool
+}
+
+enum SparseFrameVisualRedactor {
+  static func mask(
+    image: CGImage,
+    regions: [OCRTextRegion],
+    paddingPixels: CGFloat = 2
+  ) -> CGImage {
+    guard !regions.isEmpty else { return image }
+    let width = image.width
+    let height = image.height
+    guard
+      let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+      )
+    else {
+      return image
+    }
+    let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+    context.draw(image, in: bounds)
+    context.setFillColor(CGColor(gray: 0, alpha: 1))
+    for region in regions {
+      let rect = pixelRect(
+        normalized: region.normalizedBoundingBox,
+        width: width,
+        height: height
+      )
+      .insetBy(dx: -paddingPixels, dy: -paddingPixels)
+      .intersection(bounds)
+      guard !rect.isNull, !rect.isEmpty else { continue }
+      context.fill(rect)
+    }
+    return context.makeImage() ?? image
+  }
+
+  static func pixelRect(normalized: CGRect, width: Int, height: Int) -> CGRect {
+    let imageWidth = CGFloat(width)
+    let imageHeight = CGFloat(height)
+    let x = normalized.minX * imageWidth
+    let y = (1 - normalized.maxY) * imageHeight
+    return CGRect(
+      x: x,
+      y: y,
+      width: normalized.width * imageWidth,
+      height: normalized.height * imageHeight
+    )
+  }
 }
 
 private struct SparseFrameSession: Sendable {
@@ -195,6 +261,7 @@ private struct SparseFrameSegmentMetadata: Codable {
   let heightPx: Int
   let retentionHours: Double
   let includesRawOcrText: Bool
+  let visualRedactionEnabled: Bool
 }
 
 private struct SparseFrameOCRRecord: Codable {
