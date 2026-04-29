@@ -56,7 +56,87 @@ enum CaptureOneShotError: LocalizedError {
   }
 }
 
-actor CaptureService: NSObject {
+actor CaptureService {
+  private let workerClient: CaptureWorkerStreamClient
+  private var runningScope: RunningCaptureScope?
+
+  init(
+    onFrame: @escaping @Sendable (CapturedFrame) async -> Void,
+    onFrameDropped: @escaping @Sendable (CGDirectDisplayID) async -> Void = { _ in }
+  ) {
+    self.workerClient = CaptureWorkerStreamClient(
+      onFrame: onFrame,
+      onFrameDropped: onFrameDropped
+    )
+  }
+
+  func start(
+    targetFps: Double,
+    captureAllDisplays: Bool = false,
+    selectedDisplayIds: [UInt32] = []
+  ) async throws {
+    await stop()
+    let scope = RunningCaptureScope(
+      targetFps: targetFps,
+      captureAllDisplays: captureAllDisplays,
+      selectedDisplayIds: selectedDisplayIds
+    )
+    try await workerClient.start(scope: scope)
+    runningScope = scope
+  }
+
+  func stop() async {
+    await workerClient.stop()
+    runningScope = nil
+  }
+
+  func updateFps(_ fps: Double) async {
+    guard let current = runningScope else { return }
+    let next = RunningCaptureScope(
+      targetFps: fps,
+      captureAllDisplays: current.captureAllDisplays,
+      selectedDisplayIds: current.selectedDisplayIds
+    )
+    do {
+      try await workerClient.start(scope: next)
+      runningScope = next
+    } catch {
+      Log.capture.error(
+        "capture worker fps update failed: \(error.localizedDescription, privacy: .public)"
+      )
+    }
+  }
+
+  func displayStats() async -> [CaptureDisplayStats] {
+    await workerClient.displayStats()
+  }
+
+  static func captureOneFrame(
+    targetFps: Double,
+    captureAllDisplays: Bool,
+    selectedDisplayIds: [UInt32],
+    timeoutSeconds: Double,
+    onFrameDropped: @escaping @Sendable (CGDirectDisplayID) async -> Void = { _ in }
+  ) async throws -> CapturedFrame {
+    do {
+      return try await CaptureWorkerClient.captureOneFrame(
+        displayId: selectedDisplayIds.first,
+        timeoutSeconds: timeoutSeconds
+      )
+    } catch {
+      await onFrameDropped(selectedDisplayIds.first ?? CGMainDisplayID())
+      throw error
+    }
+  }
+}
+
+struct RunningCaptureScope: Sendable, Equatable {
+  let targetFps: Double
+  let captureAllDisplays: Bool
+  let selectedDisplayIds: [UInt32]
+}
+
+actor ScreenCaptureService: NSObject {
   private var captures: [CGDirectDisplayID: DisplayCapture] = [:]
   private let onFrame: @Sendable (CapturedFrame) async -> Void
   private let onFrameDropped: @Sendable (CGDirectDisplayID) async -> Void
@@ -168,7 +248,7 @@ actor CaptureService: NSObject {
     onFrameDropped: @escaping @Sendable (CGDirectDisplayID) async -> Void = { _ in }
   ) async throws -> CapturedFrame {
     let receiver = OneShotFrameReceiver()
-    let service = CaptureService { frame in
+    let service = ScreenCaptureService { frame in
       await receiver.record(frame)
     } onFrameDropped: { displayId in
       await onFrameDropped(displayId)
@@ -228,6 +308,232 @@ actor CaptureService: NSObject {
     let boundsWidth = CGDisplayBounds(displayId).width
     guard boundsWidth > 0 else { return nil }
     return Double(pixelWidth) / Double(boundsWidth)
+  }
+}
+
+actor CaptureWorkerStreamClient {
+  private let executable: URL
+  private let onFrame: @Sendable (CapturedFrame) async -> Void
+  private let onFrameDropped: @Sendable (CGDirectDisplayID) async -> Void
+  private var streams: [CGDirectDisplayID: CaptureWorkerStream] = [:]
+
+  init(
+    executable: URL = URL(fileURLWithPath: CommandLine.arguments[0]),
+    onFrame: @escaping @Sendable (CapturedFrame) async -> Void,
+    onFrameDropped: @escaping @Sendable (CGDirectDisplayID) async -> Void
+  ) {
+    self.executable = executable
+    self.onFrame = onFrame
+    self.onFrameDropped = onFrameDropped
+  }
+
+  func start(scope: RunningCaptureScope) async throws {
+    stop()
+    let displays = try await MainActor.run { try SystemDisplayDiagnosticsProbe.systemDisplays() }
+    let selectedIds = DisplaySelection.selectedDisplayIds(
+      available: displays.map(\.displayId),
+      captureAllDisplays: scope.captureAllDisplays,
+      selectedDisplayIds: scope.selectedDisplayIds
+    )
+    guard !selectedIds.isEmpty else {
+      throw NSError(domain: "agentd", code: 1, userInfo: [NSLocalizedDescriptionKey: "no display"])
+    }
+    let byId = Dictionary(uniqueKeysWithValues: displays.map { ($0.displayId, $0) })
+    var started: [CGDirectDisplayID: CaptureWorkerStream] = [:]
+    do {
+      for displayId in selectedIds {
+        guard let display = byId[displayId] else { continue }
+        let stream = CaptureWorkerStream(
+          display: display,
+          onFrame: onFrame,
+          onFrameDropped: onFrameDropped
+        )
+        try stream.start(executable: executable, fps: scope.targetFps)
+        started[displayId] = stream
+      }
+    } catch {
+      for stream in started.values {
+        stream.stop()
+      }
+      throw error
+    }
+    streams = started
+    Log.capture.info(
+      "capture worker stream started fps=\(scope.targetFps, privacy: .public) displays=\(selectedIds.map(String.init).joined(separator: ","), privacy: .public)"
+    )
+  }
+
+  func stop() {
+    for stream in streams.values {
+      stream.stop()
+    }
+    streams.removeAll()
+    Log.capture.info("capture worker stream stopped")
+  }
+
+  func displayStats() -> [CaptureDisplayStats] {
+    streams.values.map { $0.stats() }.sorted { $0.displayId < $1.displayId }
+  }
+}
+
+final class CaptureWorkerStream: @unchecked Sendable {
+  private let display: DisplayDiagnostic
+  private let supervisor = CaptureWorkerSupervisor()
+  private let stdout = Pipe()
+  private let stderr = Pipe()
+  private let reader: CaptureWorkerStreamLineReader
+  private let statsRecorder: CaptureWorkerStreamStatsRecorder
+  private let dispatcher: BufferedFrameDispatcher
+
+  init(
+    display: DisplayDiagnostic,
+    onFrame: @escaping @Sendable (CapturedFrame) async -> Void,
+    onFrameDropped: @escaping @Sendable (CGDirectDisplayID) async -> Void
+  ) {
+    self.display = display
+    self.statsRecorder = CaptureWorkerStreamStatsRecorder(display: display)
+    self.dispatcher = BufferedFrameDispatcher(
+      onFrame: onFrame,
+      onDropped: { await onFrameDropped(display.displayId) }
+    )
+    self.reader = CaptureWorkerStreamLineReader { [statsRecorder, dispatcher] payload in
+      do {
+        let frame = try CaptureWorkerFrameCodec.frame(from: payload)
+        if dispatcher.yield(frame) {
+          statsRecorder.recordEnqueued(frame)
+        } else {
+          statsRecorder.recordDropped()
+        }
+      } catch {
+        statsRecorder.recordDropped()
+        Log.capture.error(
+          "capture worker frame decode failed display=\(payload.displayId, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+        )
+      }
+    } onDecodeError: { [statsRecorder, display] message in
+      statsRecorder.recordDropped()
+      Log.capture.error(
+        "capture worker stream decode failed display=\(display.displayId, privacy: .public) error=\(message, privacy: .public)"
+      )
+    }
+  }
+
+  func start(executable: URL, fps: Double) throws {
+    stdout.fileHandleForReading.readabilityHandler = { @Sendable [reader] handle in
+      let data = handle.availableData
+      guard !data.isEmpty else { return }
+      reader.append(data)
+    }
+    stderr.fileHandleForReading.readabilityHandler = { @Sendable [display] handle in
+      let data = handle.availableData
+      guard !data.isEmpty, let message = String(data: data, encoding: .utf8) else { return }
+      Log.capture.warning(
+        "capture worker stderr display=\(display.displayId, privacy: .public) \(message, privacy: .public)"
+      )
+    }
+    _ = try supervisor.start(
+      CaptureWorkerProcessSpec(
+        executableURL: executable,
+        arguments: [
+          "capture-worker-stream",
+          "--display-id", String(display.displayId),
+          "--fps", String(max(0.2, fps)),
+        ],
+        standardOutput: stdout,
+        standardError: stderr
+      )
+    )
+  }
+
+  func stop() {
+    stdout.fileHandleForReading.readabilityHandler = nil
+    stderr.fileHandleForReading.readabilityHandler = nil
+    _ = supervisor.terminate(graceSeconds: 2)
+    dispatcher.finish()
+  }
+
+  func stats() -> CaptureDisplayStats {
+    statsRecorder.snapshot()
+  }
+}
+
+final class CaptureWorkerStreamLineReader: @unchecked Sendable {
+  private let lock = NSLock()
+  private var buffer = Data()
+  private let onPayload: @Sendable (CaptureWorkerFramePayload) -> Void
+  private let onDecodeError: @Sendable (String) -> Void
+
+  init(
+    onPayload: @escaping @Sendable (CaptureWorkerFramePayload) -> Void,
+    onDecodeError: @escaping @Sendable (String) -> Void
+  ) {
+    self.onPayload = onPayload
+    self.onDecodeError = onDecodeError
+  }
+
+  func append(_ data: Data) {
+    let lines = lock.withLock { () -> [Data] in
+      buffer.append(data)
+      var lines: [Data] = []
+      while let newline = buffer.firstIndex(of: 0x0A) {
+        lines.append(buffer[..<newline])
+        buffer.removeSubrange(...newline)
+      }
+      return lines
+    }
+    for line in lines where !line.isEmpty {
+      do {
+        onPayload(try CaptureWorkerFrameCodec.decodePayload(line))
+      } catch {
+        onDecodeError(error.localizedDescription)
+      }
+    }
+  }
+}
+
+final class CaptureWorkerStreamStatsRecorder: @unchecked Sendable {
+  private let lock = NSLock()
+  private let display: DisplayDiagnostic
+  private var widthPx: Int
+  private var heightPx: Int
+  private var framesEnqueued = 0
+  private var framesDropped = 0
+  private var lastFrameAt: Date?
+
+  init(display: DisplayDiagnostic) {
+    self.display = display
+    self.widthPx = display.width
+    self.heightPx = display.height
+  }
+
+  func recordEnqueued(_ frame: CapturedFrame) {
+    lock.lock()
+    framesEnqueued += 1
+    widthPx = frame.cgImage.width
+    heightPx = frame.cgImage.height
+    lastFrameAt = frame.timestamp
+    lock.unlock()
+  }
+
+  func recordDropped() {
+    lock.lock()
+    framesDropped += 1
+    lock.unlock()
+  }
+
+  func snapshot() -> CaptureDisplayStats {
+    lock.lock()
+    defer { lock.unlock() }
+    return CaptureDisplayStats(
+      displayId: display.displayId,
+      widthPx: widthPx,
+      heightPx: heightPx,
+      displayScale: display.scale,
+      mainDisplay: display.isMain,
+      framesEnqueued: framesEnqueued,
+      framesDropped: framesDropped,
+      lastFrameAt: lastFrameAt
+    )
   }
 }
 

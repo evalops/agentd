@@ -44,6 +44,48 @@ final class CaptureWorkerProtocolTests: XCTestCase {
     }
   }
 
+  func testStreamLineReaderDecodesChunkedPayloads() throws {
+    let frame = CapturedFrame(
+      timestamp: Date(timeIntervalSince1970: 456),
+      cgImage: try Self.image(),
+      displayId: 99,
+      displayScale: 1,
+      mainDisplay: false
+    )
+    let payload = try CaptureWorkerFrameCodec.payload(for: frame)
+    let data = try CaptureWorkerFrameCodec.encodePayload(payload)
+    let split = data.index(data.startIndex, offsetBy: data.count / 2)
+    let recorder = PayloadRecorder()
+    let reader = CaptureWorkerStreamLineReader { payload in
+      recorder.append(payload)
+    } onDecodeError: { error in
+      recorder.fail(error)
+    }
+
+    reader.append(data[..<split])
+    XCTAssertEqual(recorder.payloads().count, 0)
+    reader.append(data[split...])
+
+    let payloads = recorder.payloads()
+    XCTAssertEqual(payloads.count, 1)
+    XCTAssertEqual(payloads.first?.displayId, 99)
+    XCTAssertEqual(recorder.errors(), [])
+  }
+
+  func testStreamLineReaderReportsMalformedLines() {
+    let recorder = PayloadRecorder()
+    let reader = CaptureWorkerStreamLineReader { payload in
+      recorder.append(payload)
+    } onDecodeError: { error in
+      recorder.fail(error)
+    }
+
+    reader.append(Data("not-json\n".utf8))
+
+    XCTAssertEqual(recorder.payloads().count, 0)
+    XCTAssertEqual(recorder.errors().count, 1)
+  }
+
   private static func image() throws -> CGImage {
     let width = 4
     let height = 4
@@ -67,5 +109,35 @@ final class CaptureWorkerProtocolTests: XCTestCase {
       throw CaptureWorkerProtocolError.imageEncodeFailed
     }
     return image
+  }
+}
+
+private final class PayloadRecorder: @unchecked Sendable {
+  private let lock = NSLock()
+  private var seenPayloads: [CaptureWorkerFramePayload] = []
+  private var seenErrors: [String] = []
+
+  func append(_ payload: CaptureWorkerFramePayload) {
+    lock.lock()
+    seenPayloads.append(payload)
+    lock.unlock()
+  }
+
+  func fail(_ error: String) {
+    lock.lock()
+    seenErrors.append(error)
+    lock.unlock()
+  }
+
+  func payloads() -> [CaptureWorkerFramePayload] {
+    lock.lock()
+    defer { lock.unlock() }
+    return seenPayloads
+  }
+
+  func errors() -> [String] {
+    lock.lock()
+    defer { lock.unlock() }
+    return seenErrors
   }
 }

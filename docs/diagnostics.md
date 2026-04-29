@@ -65,3 +65,8 @@ while keeping privacy decisions in the parent process. `--no-ocr` keeps the
 capture and scrubber path intact but records an empty OCR result. `--no-scrub`
 is recognized for operator muscle memory but deliberately refused; local
 diagnostics should not bypass the scrubber.
+
+Continuous menu-bar capture uses the same boundary: the parent starts one
+same-binary `capture-worker-stream` subprocess per selected display, reads
+newline-delimited frame payloads over stdout, and keeps policy, scrubber, OCR,
+batching, health checks, and TERM -> KILL supervision in the parent process.
