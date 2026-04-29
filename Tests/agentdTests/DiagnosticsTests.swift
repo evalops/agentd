@@ -36,6 +36,7 @@ final class DiagnosticsTests: XCTestCase {
       policySource: "chronicle://policy/\(SecretScrubberTests.jwtFixture())",
       controlError: "none",
       pendingStats: PendingFrameStats(frameCount: 2, estimatedBytes: 4096),
+      ocrCacheStats: OCRCacheStats(entries: 3, hits: 7, misses: 1, evictions: 2),
       localBatchStats: LocalBatchStats(fileCount: 1, bytes: 1234),
       localBatches: [
         LocalBatchSummary(
@@ -64,6 +65,9 @@ final class DiagnosticsTests: XCTestCase {
     let report = DiagnosticsReport.markdown(snapshot)
 
     XCTAssertTrue(report.contains("Queued local batches: 1"))
+    XCTAssertTrue(report.contains("OCR cache entries: 3"))
+    XCTAssertTrue(report.contains("OCR cache hit rate: 0.88"))
+    XCTAssertTrue(report.contains("OCR cache evictions: 2"))
     XCTAssertTrue(report.contains("| batch_1 |"))
     XCTAssertTrue(
       report.contains("https://chronicle.example.com/chronicle.v1.ChronicleService/SubmitBatch"))

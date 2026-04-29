@@ -12,6 +12,7 @@ The report includes:
 - app version, local-only/managed mode, Secret Broker mode, policy version, and
   policy source;
 - in-memory frame pressure and queued local batch count/bytes;
+- OCR cache entry, hit-rate, miss, and eviction counters;
 - queued batch id, modification time, size, and encryption state.
 
 The report omits OCR text and raw queued payloads. It strips endpoint query

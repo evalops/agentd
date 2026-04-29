@@ -12,6 +12,7 @@ struct DiagnosticsSnapshot: Sendable {
   let policySource: String?
   let controlError: String?
   let pendingStats: PendingFrameStats
+  let ocrCacheStats: OCRCacheStats
   let localBatchStats: LocalBatchStats
   let localBatches: [LocalBatchSummary]
   let captureDisplayStats: [CaptureDisplayStats]
@@ -36,6 +37,12 @@ enum DiagnosticsReport {
     lines.append("- Last control error: \(redact(snapshot.controlError ?? "none"))")
     lines.append("- Pending in-memory frames: \(snapshot.pendingStats.frameCount)")
     lines.append("- Pending in-memory bytes: \(snapshot.pendingStats.estimatedBytes)")
+    lines.append("- OCR cache entries: \(snapshot.ocrCacheStats.entries)")
+    lines.append(
+      "- OCR cache hit rate: \(String(format: "%.2f", snapshot.ocrCacheStats.hitRate))"
+    )
+    lines.append("- OCR cache misses: \(snapshot.ocrCacheStats.misses)")
+    lines.append("- OCR cache evictions: \(snapshot.ocrCacheStats.evictions)")
     lines.append("- Queued local batches: \(snapshot.localBatchStats.fileCount)")
     lines.append("- Queued local bytes: \(snapshot.localBatchStats.bytes)")
     lines.append("- Last submit result: \(snapshot.lastSubmitResult ?? "unknown")")

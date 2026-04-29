@@ -277,7 +277,7 @@ final class PipelineTests: XCTestCase {
     }
 
     await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
-    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAB), context: Self.context())
     await pipeline.flush()
 
     let batches = await recorder.snapshot()
@@ -521,6 +521,66 @@ final class PipelineTests: XCTestCase {
     XCTAssertEqual(decision.dropKind, .deniedPath)
   }
 
+  func testOcrCacheAvoidsRecognizingSameDuplicateWhenSamplerEnabled() async throws {
+    var cfg = Self.config()
+    cfg.ocrDiffSamplerEnabled = true
+    let recorder = BatchRecorder()
+    let ocr = CountingOCR(text: "same visible text")
+    let pipeline = FramePipeline(config: cfg, ocr: ocr) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.flush()
+
+    let callCount = await ocr.callCount()
+    XCTAssertEqual(callCount, 1)
+    let stats = await pipeline.ocrCacheStats()
+    XCTAssertEqual(stats.entries, 1)
+    XCTAssertEqual(stats.hits, 1)
+    XCTAssertEqual(stats.misses, 1)
+    let batches = await recorder.snapshot()
+    let batch = try XCTUnwrap(batches.first)
+    XCTAssertEqual(batch.frames.count, 1)
+    XCTAssertEqual(batch.droppedCounts.duplicate, 1)
+  }
+
+  func testOcrCacheMissesWhenImageContentChanges() async throws {
+    let recorder = BatchRecorder()
+    let ocr = CountingOCR(text: "visible text")
+    let pipeline = FramePipeline(config: Self.config(), ocr: ocr) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA), context: Self.context())
+    await pipeline.consume(Self.frame(bits: 0x5555_5555_5555_5555), context: Self.context())
+
+    let callCount = await ocr.callCount()
+    XCTAssertEqual(callCount, 2)
+    let stats = await pipeline.ocrCacheStats()
+    XCTAssertEqual(stats.hits, 0)
+    XCTAssertEqual(stats.misses, 2)
+    XCTAssertEqual(stats.entries, 2)
+  }
+
+  func testOcrCacheEvictsOldestEntry() {
+    var cache = OCRResultCache(maxEntries: 1)
+    let first = OCRCacheKey(context: Self.context(windowTitle: "first"), imageHash: 1)
+    let second = OCRCacheKey(context: Self.context(windowTitle: "second"), imageHash: 2)
+
+    cache.insert(OCRResult(text: "first", confidence: 1, language: "en"), for: first)
+    cache.insert(OCRResult(text: "second", confidence: 1, language: "en"), for: second)
+
+    XCTAssertNil(cache.result(for: first))
+    XCTAssertEqual(cache.result(for: second)?.text, "second")
+    let stats = cache.stats()
+    XCTAssertEqual(stats.entries, 1)
+    XCTAssertEqual(stats.evictions, 1)
+    XCTAssertEqual(stats.hits, 1)
+    XCTAssertEqual(stats.misses, 1)
+  }
+
   static func config(maxFramesPerBatch: Int = 24, maxOcrTextChars: Int = 4096) -> AgentConfig {
     AgentConfig(
       deviceId: "device_1",
@@ -643,6 +703,24 @@ actor SequenceOCR: OCRRecognizing {
   func recognize(cgImage: CGImage) async throws -> OCRResult {
     let text = texts.isEmpty ? "" : texts.removeFirst()
     return OCRResult(text: text, confidence: confidence, language: "en")
+  }
+}
+
+actor CountingOCR: OCRRecognizing {
+  private let text: String
+  private var calls = 0
+
+  init(text: String) {
+    self.text = text
+  }
+
+  func recognize(cgImage: CGImage) async throws -> OCRResult {
+    calls += 1
+    return OCRResult(text: text, confidence: 0.9, language: "en")
+  }
+
+  func callCount() -> Int {
+    calls
   }
 }
 
