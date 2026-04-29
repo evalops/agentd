@@ -547,6 +547,9 @@ struct PrivacyDecisionCache: Sendable {
     {
       return (false, "allowlist_miss", .deniedApp)
     }
+    if let browserReason = BrowserPrivacyObservation.reason(context: context) {
+      return (false, browserReason, .deniedApp)
+    }
     if signature.pathClass.hasPrefix("denied:") {
       return (false, "denied_path", .deniedPath)
     }
@@ -572,6 +575,64 @@ struct PrivacyDecisionCache: Sendable {
   }
 }
 
+enum BrowserPrivacyObservation {
+  static func reason(context: WindowContext) -> String? {
+    guard isBrowserBundle(context.bundleId) else { return nil }
+    let title = context.windowTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !title.isEmpty else { return "browser_window_missing_title" }
+
+    let titleLower = title.lowercased()
+    if privateWindowTitleFragments.contains(where: { titleLower.contains($0) }) {
+      return "browser_private_window"
+    }
+    if meetingTitleFragments.contains(where: { titleLower.contains($0) }) {
+      return "browser_meeting_window"
+    }
+    if isMeetingURL(context.documentPath) || isMeetingURL(title) {
+      return "browser_meeting_window"
+    }
+    return nil
+  }
+
+  private static func isBrowserBundle(_ bundleId: String) -> Bool {
+    browserBundleIds.contains(bundleId)
+  }
+
+  private static func isMeetingURL(_ value: String?) -> Bool {
+    guard let value, !value.isEmpty else { return false }
+    let lower = value.lowercased()
+    guard lower.contains("meet.google.com") else { return false }
+    guard lower.contains("://") else { return true }
+    guard let components = URLComponents(string: lower),
+      let host = components.host
+    else {
+      return true
+    }
+    return host == "meet.google.com" || host.hasSuffix(".meet.google.com")
+  }
+
+  private static let browserBundleIds: Set<String> = [
+    "company.thebrowser.Browser",
+    "com.apple.Safari",
+    "com.apple.SafariTechnologyPreview",
+    "com.google.Chrome",
+    "com.google.Chrome.beta",
+    "com.google.Chrome.canary",
+    "com.google.Chrome.dev",
+    "org.mozilla.firefox",
+  ]
+
+  private static let privateWindowTitleFragments = [
+    "private browsing",
+    "incognito",
+  ]
+
+  private static let meetingTitleFragments = [
+    "meet - ",
+    "google meet",
+  ]
+}
+
 struct PrivacyObservationSignature: Sendable, Hashable {
   let bundleId: String
   let pid: pid_t
@@ -589,7 +650,8 @@ struct PrivacyObservationSignature: Sendable, Hashable {
 
   static func titleClass(_ title: String, pausePatterns: [String]) -> String {
     guard !title.isEmpty else { return "missing" }
-    if let match = pausePatterns.first(where: { title.contains($0) }) {
+    let lowerTitle = title.lowercased()
+    if let match = pausePatterns.first(where: { lowerTitle.contains($0.lowercased()) }) {
       return "pause:\(stableClassHash(match))"
     }
     return "normal"
