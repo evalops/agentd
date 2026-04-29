@@ -37,6 +37,9 @@ final class DiagnosticsTests: XCTestCase {
       controlError: "none",
       pendingStats: PendingFrameStats(frameCount: 2, estimatedBytes: 4096),
       ocrCacheStats: OCRCacheStats(entries: 3, hits: 7, misses: 1, evictions: 2),
+      textSourceStats: TextSourceStats(
+        counts: [.accessibility: 5, .visionOCR: 2, .cachedOCR: 1]
+      ),
       eventCaptureStats: EventCaptureStats(
         enabled: true,
         triggerCounts: [.focusedWindow: 2, .idleFallback: 1],
@@ -77,6 +80,9 @@ final class DiagnosticsTests: XCTestCase {
     XCTAssertTrue(report.contains("OCR cache entries: 3"))
     XCTAssertTrue(report.contains("OCR cache hit rate: 0.88"))
     XCTAssertTrue(report.contains("OCR cache evictions: 2"))
+    XCTAssertTrue(report.contains("Text source accessibility: 5"))
+    XCTAssertTrue(report.contains("Text source visionOCR: 2"))
+    XCTAssertTrue(report.contains("Text source cachedOCR: 1"))
     XCTAssertTrue(report.contains("Event capture enabled: true"))
     XCTAssertTrue(report.contains("Event capture successes: 2"))
     XCTAssertTrue(report.contains("| focusedWindow | 2 |"))

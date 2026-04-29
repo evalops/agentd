@@ -13,6 +13,7 @@ struct DiagnosticsSnapshot: Sendable {
   let controlError: String?
   let pendingStats: PendingFrameStats
   let ocrCacheStats: OCRCacheStats
+  let textSourceStats: TextSourceStats
   let eventCaptureStats: EventCaptureStats
   let localBatchStats: LocalBatchStats
   let localBatches: [LocalBatchSummary]
@@ -44,6 +45,11 @@ enum DiagnosticsReport {
     )
     lines.append("- OCR cache misses: \(snapshot.ocrCacheStats.misses)")
     lines.append("- OCR cache evictions: \(snapshot.ocrCacheStats.evictions)")
+    for source in FrameTextSource.allCases {
+      lines.append(
+        "- Text source \(source.rawValue): \(snapshot.textSourceStats.counts[source] ?? 0)"
+      )
+    }
     lines.append("- Event capture enabled: \(snapshot.eventCaptureStats.enabled)")
     lines.append("- Event capture starts: \(snapshot.eventCaptureStats.capturesStarted)")
     lines.append("- Event capture successes: \(snapshot.eventCaptureStats.capturesSucceeded)")

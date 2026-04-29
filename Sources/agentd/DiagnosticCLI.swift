@@ -264,14 +264,17 @@ enum CaptureOnceDiagnostics {
     }
     let frame = try await captureOneFrame(
       displayId: options.displayId, timeoutSeconds: 6)
+    let context = try await MainActor.run {
+      guard let context = WindowContextProbe.current() else {
+        throw DiagnosticCLIError.noWindowContext
+      }
+      return context
+    }
+    let axText = await MainActor.run { AccessibilityTextExtractor.current(context: context) }
     await pipeline.consume(
       frame,
-      context: try await MainActor.run {
-        guard let context = WindowContextProbe.current() else {
-          throw DiagnosticCLIError.noWindowContext
-        }
-        return context
-      }
+      context: context,
+      accessibilityText: axText
     )
     await pipeline.flush()
     let batches = await recorder.snapshot()

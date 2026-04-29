@@ -40,7 +40,8 @@ local inspection of the shipped arm64 `codex_chronicle` helper bundled with
   display id, scale, and main-display metadata for multi-display diagnostics.
 - Reads `(bundleId, windowTitle, documentPath)` per frame via the Accessibility
   API and `NSWorkspace`.
-- Runs Apple Vision OCR on-device.
+- Extracts focused-window Accessibility text first when available, then falls
+  back to Apple Vision OCR on-device for image-heavy or AX-empty frames.
 - Drops near-duplicate frames via a 64-bit pHash ring buffer (Hamming ≤ 5).
 - Fail-closed `SecretScrubber` against AWS / GCP / SSH / JWT / GitHub classic
   and fine-grained tokens / Google API keys / npm / SendGrid / DigitalOcean /
@@ -62,8 +63,9 @@ local inspection of the shipped arm64 `codex_chronicle` helper bundled with
   observations while still running SecretScrubber on every frame before
   persistence.
 - Optional event-triggered capture mode arms one-shot captures on focused-window
-  changes, clipboard updates, and idle fallback ticks behind
-  `eventCaptureEnabled`, with debounce/min-gap counters in diagnostics.
+  changes, clicks, typing pauses, scroll stops, clipboard updates, and idle
+  fallback ticks behind `eventCaptureEnabled`, with debounce/min-gap counters in
+  diagnostics.
 - Optional sparse-frame visual redaction masks OCR text boxes in local JPEG
   artifacts behind `sparseFrameVisualRedactionEnabled`; remote batch payloads are
   unchanged.
@@ -270,11 +272,11 @@ encrypted `.agentdbatch` batches.
 
 Diagnostics reports are written under `~/.evalops/agentd/diagnostics/` with
 `0o600` permissions. They summarize permissions, policy, queue pressure, local
-batches, OCR cache hit-rate counters, event-capture trigger counters,
-sparse-frame visual-redaction state, active display frame/drop counters, and
-last submit health without OCR text or raw payloads. The same binary also
-supports `list-displays`, `capture-once`, and `selftest` diagnostic subcommands;
-see `docs/diagnostics.md`.
+batches, OCR cache hit-rate counters, AX-vs-OCR text-source counters,
+event-capture trigger counters, sparse-frame visual-redaction state, active
+display frame/drop counters, and last submit health without OCR text or raw
+payloads. The same binary also supports `list-displays`, `capture-once`, and
+`selftest` diagnostic subcommands; see `docs/diagnostics.md`.
 
 For Chronicle-style local introspection, set `sparseFrameStorageRoot` to a
 directory such as `~/.evalops/agentd/sparse-frames`. agentd then writes

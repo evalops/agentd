@@ -601,6 +601,56 @@ final class PipelineTests: XCTestCase {
     XCTAssertEqual(batch.droppedCounts.duplicate, 1)
   }
 
+  func testAccessibilityTextBypassesVisionOcr() async throws {
+    let recorder = BatchRecorder()
+    let ocr = CountingOCR(text: "vision text")
+    let pipeline = FramePipeline(config: Self.config(), ocr: ocr) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(
+      Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA),
+      context: Self.context(),
+      accessibilityText: AccessibilityTextResult(
+        text: "  accessibility\nvisible\ttext  ",
+        nodesVisited: 3,
+        truncated: false
+      )
+    )
+    await pipeline.flush()
+
+    let callCount = await ocr.callCount()
+    XCTAssertEqual(callCount, 0)
+    let stats = await pipeline.textSourceStats()
+    XCTAssertEqual(stats.counts[.accessibility], 1)
+    let batches = await recorder.snapshot()
+    let batch = try XCTUnwrap(batches.first)
+    XCTAssertEqual(batch.frames.first?.ocrText, "accessibility visible text")
+  }
+
+  func testEmptyAccessibilityTextFallsBackToVisionOcr() async throws {
+    let recorder = BatchRecorder()
+    let ocr = CountingOCR(text: "vision fallback")
+    let pipeline = FramePipeline(config: Self.config(), ocr: ocr) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(
+      Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA),
+      context: Self.context(),
+      accessibilityText: AccessibilityTextResult(text: "   ", nodesVisited: 1, truncated: false)
+    )
+    await pipeline.flush()
+
+    let callCount = await ocr.callCount()
+    XCTAssertEqual(callCount, 1)
+    let stats = await pipeline.textSourceStats()
+    XCTAssertEqual(stats.counts[.visionOCR], 1)
+    let batches = await recorder.snapshot()
+    let batch = try XCTUnwrap(batches.first)
+    XCTAssertEqual(batch.frames.first?.ocrText, "vision fallback")
+  }
+
   func testOcrCacheMissesWhenImageContentChanges() async throws {
     let recorder = BatchRecorder()
     let ocr = CountingOCR(text: "visible text")

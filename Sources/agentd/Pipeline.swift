@@ -8,6 +8,18 @@ protocol OCRRecognizing: Sendable {
   func recognize(cgImage: CGImage) async throws -> OCRResult
 }
 
+enum FrameTextSource: String, CaseIterable, Sendable, Hashable {
+  case accessibility
+  case visionOCR
+  case cachedOCR
+}
+
+struct TextSourceStats: Sendable, Equatable {
+  let counts: [FrameTextSource: Int]
+
+  static let empty = TextSourceStats(counts: [:])
+}
+
 struct ProcessedFrame: Sendable, Codable {
   let frameHash: String
   let perceptualHash: UInt64
@@ -666,7 +678,17 @@ actor FramePipeline {
     ocrCache.stats()
   }
 
-  func consume(_ frame: CapturedFrame, context: WindowContext?) async {
+  private var textSourceCounts: [FrameTextSource: Int] = [:]
+
+  func textSourceStats() -> TextSourceStats {
+    TextSourceStats(counts: textSourceCounts)
+  }
+
+  func consume(
+    _ frame: CapturedFrame,
+    context: WindowContext?,
+    accessibilityText: AccessibilityTextResult? = nil
+  ) async {
     guard let ctx = context else { return }
 
     let privacyDecision = privacyDecisionCache.decision(for: ctx, config: config)
@@ -693,22 +715,32 @@ actor FramePipeline {
     }
 
     let ocrResult: OCRResult
-    let ocrCacheKey = ImageContentHash.calculate(cgImage: frame.cgImage).map {
-      OCRCacheKey(context: ctx, imageHash: $0)
-    }
-    if let ocrCacheKey, let cached = ocrCache.result(for: ocrCacheKey) {
-      ocrResult = cached
+    let textSource: FrameTextSource
+    let axText = accessibilityText.map { AccessibilityTextExtractor.normalize($0.text) } ?? ""
+    if !axText.isEmpty {
+      ocrResult = OCRResult(text: axText, confidence: 1, language: nil)
+      textSource = .accessibility
     } else {
-      do {
-        ocrResult = try await ocr.recognize(cgImage: frame.cgImage)
-        if let ocrCacheKey {
-          ocrCache.insert(ocrResult, for: ocrCacheKey)
+      let ocrCacheKey = ImageContentHash.calculate(cgImage: frame.cgImage).map {
+        OCRCacheKey(context: ctx, imageHash: $0)
+      }
+      if let ocrCacheKey, let cached = ocrCache.result(for: ocrCacheKey) {
+        ocrResult = cached
+        textSource = .cachedOCR
+      } else {
+        do {
+          ocrResult = try await ocr.recognize(cgImage: frame.cgImage)
+          textSource = .visionOCR
+          if let ocrCacheKey {
+            ocrCache.insert(ocrResult, for: ocrCacheKey)
+          }
+        } catch {
+          Log.ocr.error("ocr failed: \(error.localizedDescription, privacy: .public)")
+          return
         }
-      } catch {
-        Log.ocr.error("ocr failed: \(error.localizedDescription, privacy: .public)")
-        return
       }
     }
+    textSourceCounts[textSource, default: 0] += 1
 
     switch evaluateSecretSurfaces(context: ctx, ocrText: ocrResult.text) {
     case .dropped(let reason):

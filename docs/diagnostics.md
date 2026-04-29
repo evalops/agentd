@@ -13,6 +13,8 @@ The report includes:
   policy source;
 - in-memory frame pressure and queued local batch count/bytes;
 - OCR cache entry, hit-rate, miss, and eviction counters;
+- text-source counts for focused-window Accessibility text, fresh Vision OCR,
+  and cached OCR reuse;
 - event-capture trigger counts, debounce/min-gap suppressions, and one-shot
   capture success/failure counts;
 - sparse-frame visual-redaction enabled/disabled state;
