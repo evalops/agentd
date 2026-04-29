@@ -66,6 +66,9 @@ local inspection of the shipped arm64 `codex_chronicle` helper bundled with
   changes, clicks, typing pauses, scroll stops, clipboard updates, and idle
   fallback ticks behind `eventCaptureEnabled`, with debounce/min-gap counters in
   diagnostics.
+- Continuous capture has a local health watchdog that restarts ScreenCaptureKit
+  streams when active displays stop producing frames, with restart counts in
+  diagnostics.
 - Optional sparse-frame visual redaction masks OCR text boxes in local JPEG
   artifacts behind `sparseFrameVisualRedactionEnabled`; remote batch payloads are
   unchanged.

@@ -18,6 +18,7 @@ struct DiagnosticsSnapshot: Sendable {
   let localBatchStats: LocalBatchStats
   let localBatches: [LocalBatchSummary]
   let captureDisplayStats: [CaptureDisplayStats]
+  let captureHealthStats: CaptureHealthStats
   let lastSubmitResult: String?
 }
 
@@ -58,6 +59,16 @@ enum DiagnosticsReport {
       "- Event capture debounced triggers: \(snapshot.eventCaptureStats.triggersDebounced)")
     lines.append(
       "- Event capture min-gap suppressions: \(snapshot.eventCaptureStats.triggersSuppressedByMinGap)"
+    )
+    lines.append("- Capture health restarts: \(snapshot.captureHealthStats.restartCount)")
+    lines.append(
+      "- Last capture health restart: \(snapshot.captureHealthStats.lastRestartAt.map(iso) ?? "none")"
+    )
+    lines.append(
+      "- Last capture health restart display: \(snapshot.captureHealthStats.lastRestartDisplayId.map(String.init) ?? "none")"
+    )
+    lines.append(
+      "- Last capture health restart reason: \(redact(snapshot.captureHealthStats.lastRestartReason ?? "none"))"
     )
     lines.append("- Queued local batches: \(snapshot.localBatchStats.fileCount)")
     lines.append("- Queued local bytes: \(snapshot.localBatchStats.bytes)")

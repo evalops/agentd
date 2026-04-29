@@ -71,6 +71,12 @@ final class DiagnosticsTests: XCTestCase {
           lastFrameAt: Date(timeIntervalSince1970: 3)
         )
       ],
+      captureHealthStats: CaptureHealthStats(
+        restartCount: 1,
+        lastRestartAt: Date(timeIntervalSince1970: 4),
+        lastRestartDisplayId: 42,
+        lastRestartReason: "stale frame stream"
+      ),
       lastSubmitResult: "persisted local fallback batch batch_1"
     )
 
@@ -85,6 +91,9 @@ final class DiagnosticsTests: XCTestCase {
     XCTAssertTrue(report.contains("Text source cachedOCR: 1"))
     XCTAssertTrue(report.contains("Event capture enabled: true"))
     XCTAssertTrue(report.contains("Event capture successes: 2"))
+    XCTAssertTrue(report.contains("Capture health restarts: 1"))
+    XCTAssertTrue(report.contains("Last capture health restart display: 42"))
+    XCTAssertTrue(report.contains("Last capture health restart reason: stale frame stream"))
     XCTAssertTrue(report.contains("| focusedWindow | 2 |"))
     XCTAssertTrue(report.contains("| batch_1 |"))
     XCTAssertTrue(
