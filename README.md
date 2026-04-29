@@ -48,6 +48,9 @@ local inspection of the shipped arm64 `codex_chronicle` helper bundled with
   Stripe markers — match → frame dropped, never partial-redacted.
 - Per-app allow/deny list and per-path deny list.
 - Window-title pause patterns (Zoom, FaceTime, 1Password…).
+- Foreground privacy pause releases active ScreenCaptureKit streams when known
+  protected streaming or remote-desktop content is focused, rather than merely
+  dropping frames after capture.
 - Scheduled pause windows from managed policy pause capture for meetings,
   interviews, private/focus blocks, or Platform-driven policy windows; manual
   pause always wins over automatic resume.
@@ -239,8 +242,9 @@ and bytes. `RegisterDevice` and `Heartbeat` responses may include a
 scheduled pause windows, selected-display scope, batch interval, and max-frame
 settings at runtime.
 Server `PAUSED` capture mode stops capture until a later policy resumes it.
-Manual user pause wins over scheduled pause, and scheduled pause wins over
-server policy pause for visible menu/diagnostic state.
+Manual user pause wins over scheduled pause, scheduled pause wins over
+foreground privacy pauses, and foreground privacy pauses win over server policy
+pause for visible menu/diagnostic state.
 
 Encrypted local batches use the `.agentdbatch` extension. The encryption key is
 created or loaded from Keychain service `dev.evalops.agentd.local-batch-key`,

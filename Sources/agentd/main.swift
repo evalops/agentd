@@ -23,6 +23,8 @@ final class AppController {
   private var heartbeatTimer: Timer?
   private var pauseWindowTimer: Timer?
   private var captureRetryTimer: Timer?
+  private var foregroundPrivacyTimer: Timer?
+  private var foregroundPrivacyPauseReason: String?
   private var idleMode = false
 
   init() {
@@ -140,9 +142,15 @@ final class AppController {
     )
 
     await registerWithChronicle(permissions: permissions)
+    await pollForegroundPrivacyState()
     await reconcileCaptureState()
 
     scheduleFlushTimer()
+    foregroundPrivacyTimer = Timer.scheduledTimer(
+      withTimeInterval: max(1, min(2, config.idlePollSeconds)), repeats: true
+    ) { [weak self] _ in
+      Task { @MainActor in await self?.pollForegroundPrivacyState() }
+    }
     idleTimer = Timer.scheduledTimer(
       withTimeInterval: max(1, config.idlePollSeconds), repeats: true
     ) { [weak self] _ in
@@ -161,6 +169,23 @@ final class AppController {
 
   private func applyPause(_ paused: Bool) async {
     userPaused = paused
+    await reconcileCaptureState()
+  }
+
+  private func pollForegroundPrivacyState() async {
+    let next = ForegroundPrivacyPauseDetector.reason(
+      context: WindowContextProbe.current(),
+      config: config
+    )
+    guard next != foregroundPrivacyPauseReason else { return }
+    foregroundPrivacyPauseReason = next
+    if let next {
+      Log.capture.notice(
+        "foreground privacy pause engaged reason=\(next, privacy: .public); releasing capture streams"
+      )
+    } else {
+      Log.capture.notice("foreground privacy pause cleared")
+    }
     await reconcileCaptureState()
   }
 
@@ -304,6 +329,7 @@ final class AppController {
     if captureRunning {
       await capture.updateFps(idleMode ? config.idleFps : config.captureFps)
     }
+    await pollForegroundPrivacyState()
     await reconcileCaptureState()
   }
 
@@ -351,6 +377,7 @@ final class AppController {
     PauseStateResolver.resolve(
       userPaused: userPaused,
       scheduledWindows: scheduledPauseWindows,
+      foregroundPrivacyReason: foregroundPrivacyPauseReason,
       policyPaused: controlState.serverPaused,
       policyReason: controlState.serverPauseReason,
       now: now

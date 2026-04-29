@@ -18,6 +18,7 @@ final class PauseStateTests: XCTestCase {
     let state = PauseStateResolver.resolve(
       userPaused: true,
       scheduledWindows: [window],
+      foregroundPrivacyReason: "protected_content_url",
       policyPaused: true,
       policyReason: "fleet",
       now: now
@@ -40,6 +41,7 @@ final class PauseStateTests: XCTestCase {
       PauseStateResolver.resolve(
         userPaused: false,
         scheduledWindows: [window],
+        foregroundPrivacyReason: "protected_content_url",
         policyPaused: true,
         policyReason: "fleet",
         now: now
@@ -50,6 +52,7 @@ final class PauseStateTests: XCTestCase {
       PauseStateResolver.resolve(
         userPaused: false,
         scheduledWindows: [window],
+        foregroundPrivacyReason: nil,
         policyPaused: false,
         policyReason: nil,
         now: now.addingTimeInterval(11)
@@ -76,5 +79,21 @@ final class PauseStateTests: XCTestCase {
         after: now.addingTimeInterval(40), scheduledWindows: [window]),
       now.addingTimeInterval(90)
     )
+  }
+
+  func testForegroundPrivacyWinsOverPolicy() {
+    let now = Date(timeIntervalSince1970: 100)
+
+    let state = PauseStateResolver.resolve(
+      userPaused: false,
+      scheduledWindows: [],
+      foregroundPrivacyReason: "protected_content_url",
+      policyPaused: true,
+      policyReason: "fleet",
+      now: now
+    )
+
+    XCTAssertEqual(state, .foregroundPrivacy(reason: "protected_content_url"))
+    XCTAssertEqual(state.reason, "foreground_privacy:protected_content_url")
   }
 }
