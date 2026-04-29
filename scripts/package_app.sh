@@ -10,6 +10,7 @@ app_path="$dist_dir/$app_name.app"
 zip_path="$dist_dir/$product.zip"
 identity="${AGENTD_CODESIGN_IDENTITY:--}"
 entitlements="${AGENTD_ENTITLEMENTS:-"$root/support/agentd.entitlements"}"
+adhoc_disable_library_validation="${AGENTD_ADHOC_DISABLE_LIBRARY_VALIDATION:-1}"
 sparkle_feed_url="${AGENTD_SPARKLE_FEED_URL:-}"
 sparkle_public_ed_key="${AGENTD_SPARKLE_PUBLIC_ED_KEY:-}"
 sparkle_download_url="${AGENTD_SPARKLE_DOWNLOAD_URL:-}"
@@ -227,11 +228,22 @@ fi
 ditto "$sparkle_framework" "$app_path/Contents/Frameworks/Sparkle.framework"
 codesign_nested_sparkle "$app_path/Contents/Frameworks/Sparkle.framework"
 
+app_entitlements="$entitlements"
+if [[ "$identity" == "-" && "$adhoc_disable_library_validation" == "1" ]]; then
+  app_entitlements="$dist_dir/agentd-adhoc.entitlements.plist"
+  cp "$entitlements" "$app_entitlements"
+  if /usr/libexec/PlistBuddy -c "Print :com.apple.security.cs.disable-library-validation" "$app_entitlements" >/dev/null 2>&1; then
+    /usr/libexec/PlistBuddy -c "Set :com.apple.security.cs.disable-library-validation true" "$app_entitlements"
+  else
+    /usr/libexec/PlistBuddy -c "Add :com.apple.security.cs.disable-library-validation bool true" "$app_entitlements"
+  fi
+fi
+
 codesign_args=(
   --force
   --sign "$identity"
   --options runtime
-  --entitlements "$entitlements"
+  --entitlements "$app_entitlements"
 )
 if [[ "$identity" != "-" ]]; then
   codesign_args+=(--timestamp)
@@ -241,6 +253,9 @@ codesign --verify --strict --deep --verbose=2 "$app_path"
 if [[ "$identity" == "-" ]]; then
   echo "Ad-hoc signed app: macOS TCC approvals can bind to this build's cdhash."
   echo "For permission smoke, approve this exact packaged app and relaunch without rebuilding."
+  if [[ "$adhoc_disable_library_validation" == "1" ]]; then
+    echo "Ad-hoc local package allows embedded frameworks with disable-library-validation."
+  fi
 fi
 
 create_zip

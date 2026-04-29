@@ -21,8 +21,12 @@ The signed update-channel path is intentionally evidence-first:
 Sparkle is now the release update framework. Local and ad-hoc packages keep the
 menu item disabled unless the package step injects both `SUFeedURL` and
 `SUPublicEDKey`; this prevents a developer build from pointing at production
-updates by accident. A release package that sets `AGENTD_SPARKLE_DOWNLOAD_URL`
-must also be notarized and must produce a signed appcast.
+updates by accident. Ad-hoc packages also add `disable-library-validation` to
+the local app signature so macOS can load the embedded Sparkle framework without
+a Developer ID team identifier. Developer ID release packages use the normal
+app entitlements and keep library validation enabled. A release package that
+sets `AGENTD_SPARKLE_DOWNLOAD_URL` must also be notarized and must produce a
+signed appcast.
 
 Sparkle release configuration is injected at package time:
 
