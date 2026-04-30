@@ -67,6 +67,7 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
   private let lock = NSLock()
   private var process: Process?
   private var terminatingProcess: Process?
+  private var forceKilledProcess: Process?
   private var starts = 0
   private var terminations = 0
   private var forceKills = 0
@@ -134,6 +135,7 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
 
     Log.capture.error(
       "terminating capture worker forcefully with KILL pid=\(pid, privacy: .public)")
+    markForceKillAttempt(for: target)
     Darwin.kill(pid, SIGKILL)
     let exitedAfterKill = Self.wait(for: target, timeoutSeconds: 2)
     if exitedAfterKill {
@@ -185,16 +187,21 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
   ) -> CaptureWorkerTerminationResult {
     let status = exited ? process.terminationStatus : nil
     lock.withLock {
-      terminations += 1
-      if killSent {
-        forceKills += 1
-      }
       if self.process === process {
         self.process = nil
         self.terminatingProcess = nil
+        terminations += 1
+        if killSent, self.forceKilledProcess === process {
+          forceKills += 1
+          self.forceKilledProcess = nil
+        }
         lastPid = pid
         lastExitStatus = status
       } else if self.terminatingProcess === process {
+        if killSent, self.forceKilledProcess === process {
+          forceKills += 1
+          self.forceKilledProcess = nil
+        }
         self.terminatingProcess = nil
       }
     }
@@ -214,9 +221,21 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
     if terminatingProcess === current {
       terminatingProcess = nil
     }
+    if forceKilledProcess === current {
+      forceKilledProcess = nil
+      forceKills += 1
+    }
     terminations += 1
     lastPid = current.processIdentifier
     lastExitStatus = current.terminationStatus
+  }
+
+  private func markForceKillAttempt(for process: Process) {
+    lock.withLock {
+      if self.process === process || self.terminatingProcess === process {
+        self.forceKilledProcess = process
+      }
+    }
   }
 
   private static func wait(for process: Process, timeoutSeconds: TimeInterval) -> Bool {
