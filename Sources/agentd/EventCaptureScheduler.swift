@@ -141,7 +141,7 @@ struct EventCaptureScheduler: Sendable {
 
   private mutating func shouldRunIdleFallback(now: Date) -> Bool {
     guard config.eventCaptureIdleFallbackSeconds > 0 else { return false }
-    let reference = lastIdleFallbackAt ?? lastAcceptedAt
+    let reference = lastAcceptedAt ?? lastIdleFallbackAt
     guard let reference else { return true }
     return now.timeIntervalSince(reference) >= config.eventCaptureIdleFallbackSeconds
   }

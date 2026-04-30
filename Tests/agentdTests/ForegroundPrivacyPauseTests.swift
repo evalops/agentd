@@ -33,6 +33,14 @@ final class ForegroundPrivacyPauseTests: XCTestCase {
     XCTAssertEqual(reason, "protected_application")
   }
 
+  func testUnrelatedMaxApplicationDoesNotPause() {
+    XCTAssertNil(
+      ForegroundPrivacyPauseDetector.reason(
+        context: Self.context(appName: "Max"),
+        config: Self.config()
+      ))
+  }
+
   func testUnrelatedWindowDoesNotPause() {
     XCTAssertNil(
       ForegroundPrivacyPauseDetector.reason(

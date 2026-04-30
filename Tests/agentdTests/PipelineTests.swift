@@ -450,6 +450,48 @@ final class PipelineTests: XCTestCase {
     XCTAssertGreaterThan(corner.blue, 240)
   }
 
+  func testSparseFrameVisualRedactorUsesBottomLeftVisionCoordinates() {
+    let rect = SparseFrameVisualRedactor.pixelRect(
+      normalized: CGRect(x: 0.10, y: 0.20, width: 0.30, height: 0.10),
+      width: 100,
+      height: 200
+    )
+
+    XCTAssertEqual(rect.origin.x, 10, accuracy: 0.001)
+    XCTAssertEqual(rect.origin.y, 40, accuracy: 0.001)
+    XCTAssertEqual(rect.width, 30, accuracy: 0.001)
+    XCTAssertEqual(rect.height, 20, accuracy: 0.001)
+  }
+
+  func testSparseFrameStoreRecreatesMissingCachedSessionDirectory() async throws {
+    let root = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = SparseFrameStore(root: root, retentionHours: 6)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+
+    try await store.record(
+      image: Self.image(bits: 0xAAAA_AAAA_AAAA_AAAA),
+      processed: Self.processedFrame(capturedAt: first, ocrText: "first")
+    )
+    let firstDirectory = try XCTUnwrap(
+      try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        .first { url in
+          var isDirectory: ObjCBool = false
+          return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
+        })
+    try FileManager.default.removeItem(at: firstDirectory)
+
+    try await store.record(
+      image: Self.image(bits: 0x5555_5555_5555_5555),
+      processed: Self.processedFrame(capturedAt: second, ocrText: "second")
+    )
+
+    let files = try FileManager.default.contentsOfDirectory(atPath: root.path)
+    XCTAssertTrue(files.contains { $0.contains("1970-01-01T00-03-20-display-1") })
+  }
+
   func testSparseFrameStoreCanOptIntoVisualRedactionMetadata() async throws {
     let root = try Self.temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -679,6 +721,22 @@ final class PipelineTests: XCTestCase {
     XCTAssertEqual(decision.dropKind, .deniedPath)
   }
 
+  func testDeniedPathClassSeparatesDefaultDeniedPrefixes() {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    let ssh = PrivacyObservationSignature.pathClass(
+      "\(home)/.ssh/id_ed25519",
+      deniedPrefixes: [".ssh", ".aws"]
+    )
+    let aws = PrivacyObservationSignature.pathClass(
+      "\(home)/.aws/credentials",
+      deniedPrefixes: [".ssh", ".aws"]
+    )
+
+    XCTAssertTrue(ssh.hasPrefix("denied:"))
+    XCTAssertTrue(aws.hasPrefix("denied:"))
+    XCTAssertNotEqual(ssh, aws)
+  }
+
   func testOcrCacheAvoidsRecognizingSameDuplicateWhenSamplerEnabled() async throws {
     var cfg = Self.config()
     cfg.ocrDiffSamplerEnabled = true
@@ -827,6 +885,30 @@ final class PipelineTests: XCTestCase {
       timestamp: Date(),
       cgImage: image(bits: bits),
       displayId: 1,
+      displayScale: 2.0,
+      mainDisplay: true
+    )
+  }
+
+  static func processedFrame(
+    capturedAt: Date,
+    ocrText: String,
+    displayId: UInt32 = 1
+  ) -> ProcessedFrame {
+    ProcessedFrame(
+      frameHash: UUID().uuidString,
+      perceptualHash: 1,
+      capturedAt: capturedAt,
+      bundleId: "com.test.App",
+      appName: "TestApp",
+      windowTitle: "clean",
+      documentPath: nil,
+      ocrText: ocrText,
+      ocrConfidence: 0.9,
+      widthPx: 8,
+      heightPx: 8,
+      bytesPng: 8 * 8 * 4,
+      displayId: displayId,
       displayScale: 2.0,
       mainDisplay: true
     )

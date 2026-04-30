@@ -26,9 +26,6 @@ enum ForegroundPrivacyPauseDetector {
   static func isProtectedApplication(_ value: String) -> Bool {
     let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     guard !normalized.isEmpty else { return false }
-    if normalized == "max" {
-      return true
-    }
     return protectedApplicationFragments.contains { normalized.contains($0) }
   }
 

@@ -33,6 +33,9 @@ actor SparseFrameStore {
   func record(image: CGImage, processed: ProcessedFrame) throws {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     var session = try sessions[processed.displayId] ?? createSession(for: processed)
+    if !FileManager.default.fileExists(atPath: session.directory.path) {
+      session = try createSession(for: processed)
+    }
     let storageImage =
       visualRedactionEnabled
       ? SparseFrameVisualRedactor.mask(image: image, regions: processed.ocrTextRegions)
@@ -158,7 +161,12 @@ actor SparseFrameStore {
         continue
       }
       guard let modified = values.contentModificationDate, modified < cutoff else { continue }
-      try? FileManager.default.removeItem(at: url)
+      if FileManager.default.fileExists(atPath: url.path) {
+        try? FileManager.default.removeItem(at: url)
+      }
+      if values.isDirectory == true {
+        sessions = sessions.filter { $0.value.directory != url }
+      }
     }
   }
 
@@ -240,7 +248,7 @@ enum SparseFrameVisualRedactor {
     let imageWidth = CGFloat(width)
     let imageHeight = CGFloat(height)
     let x = normalized.minX * imageWidth
-    let y = (1 - normalized.maxY) * imageHeight
+    let y = normalized.minY * imageHeight
     return CGRect(
       x: x,
       y: y,
