@@ -102,6 +102,7 @@ actor CaptureService {
       try await workerClient.start(scope: next)
       runningScope = next
     } catch {
+      runningScope = current
       Log.capture.error(
         "capture worker fps update failed: \(error.localizedDescription, privacy: .public)"
       )

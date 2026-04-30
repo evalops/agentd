@@ -66,6 +66,7 @@ enum CaptureWorkerSupervisorError: Error, LocalizedError, Equatable {
 final class CaptureWorkerSupervisor: @unchecked Sendable {
   private let lock = NSLock()
   private var process: Process?
+  private var terminatingProcess: Process?
   private var starts = 0
   private var terminations = 0
   private var forceKills = 0
@@ -85,7 +86,8 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
     }
 
     return try lock.withLock {
-      if let current = self.process, current.isRunning {
+      self.reapExitedProcessIfNeededLocked()
+      if let current = self.process {
         throw CaptureWorkerSupervisorError.alreadyRunning(pid: current.processIdentifier)
       }
       try process.run()
@@ -102,7 +104,7 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
   func terminate(graceSeconds: TimeInterval) -> CaptureWorkerTerminationResult {
     let target = lock.withLock { () -> Process? in
       guard let process = self.process else { return nil }
-      self.process = nil
+      self.terminatingProcess = process
       return process
     }
     guard let target else {
@@ -153,11 +155,6 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
     let pid = target.processIdentifier
     let exited = Self.wait(for: target, timeoutSeconds: max(0, timeoutSeconds))
     guard exited else { return nil }
-    lock.withLock {
-      if self.process === target {
-        self.process = nil
-      }
-    }
     return recordTermination(
       process: target,
       pid: pid,
@@ -192,8 +189,14 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
       if killSent {
         forceKills += 1
       }
-      lastPid = pid
-      lastExitStatus = status
+      if self.process === process {
+        self.process = nil
+        self.terminatingProcess = nil
+        lastPid = pid
+        lastExitStatus = status
+      } else if self.terminatingProcess === process {
+        self.terminatingProcess = nil
+      }
     }
     return CaptureWorkerTerminationResult(
       pid: pid,
@@ -202,6 +205,18 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
       exited: exited,
       terminationStatus: status
     )
+  }
+
+  private func reapExitedProcessIfNeededLocked() {
+    guard let current = process, !current.isRunning else { return }
+    current.waitUntilExit()
+    process = nil
+    if terminatingProcess === current {
+      terminatingProcess = nil
+    }
+    terminations += 1
+    lastPid = current.processIdentifier
+    lastExitStatus = current.terminationStatus
   }
 
   private static func wait(for process: Process, timeoutSeconds: TimeInterval) -> Bool {

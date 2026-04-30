@@ -80,6 +80,68 @@ final class CaptureWorkerSupervisorTests: XCTestCase {
     }
   }
 
+  func testWaitForExitRecordsStatsAndAllowsRestart() throws {
+    let supervisor = CaptureWorkerSupervisor()
+    let firstPID = try supervisor.start(
+      CaptureWorkerProcessSpec(
+        executableURL: URL(fileURLWithPath: "/bin/sh"),
+        arguments: ["-c", "exit 0"]
+      )
+    )
+
+    let result = try XCTUnwrap(supervisor.waitForExit(timeoutSeconds: 2))
+    XCTAssertEqual(result.pid, firstPID)
+    XCTAssertEqual(supervisor.stats().terminations, 1)
+    XCTAssertEqual(supervisor.stats().lastPid, firstPID)
+
+    let secondPID = try supervisor.start(
+      CaptureWorkerProcessSpec(
+        executableURL: URL(fileURLWithPath: "/bin/sleep"),
+        arguments: ["1"]
+      )
+    )
+    defer { _ = supervisor.terminate(graceSeconds: 1) }
+    XCTAssertNotEqual(secondPID, firstPID)
+  }
+
+  func testRejectsStartWhileWorkerIsTerminating() throws {
+    let supervisor = CaptureWorkerSupervisor()
+    let output = Pipe()
+    let pid = try supervisor.start(
+      CaptureWorkerProcessSpec(
+        executableURL: URL(fileURLWithPath: "/usr/bin/perl"),
+        arguments: [
+          "-e",
+          "$|=1; $SIG{TERM}=sub{}; print \"ready\\n\"; while (1) { select undef, undef, undef, 0.1 }",
+        ],
+        standardOutput: output
+      )
+    )
+    XCTAssertTrue(waitForReadyLine(from: output))
+
+    let terminated = DispatchSemaphore(value: 0)
+    let result = LockedTerminationResult()
+    DispatchQueue.global(qos: .userInitiated).async {
+      result.store(supervisor.terminate(graceSeconds: 0.3))
+      terminated.signal()
+    }
+    Thread.sleep(forTimeInterval: 0.05)
+
+    XCTAssertThrowsError(
+      try supervisor.start(
+        CaptureWorkerProcessSpec(
+          executableURL: URL(fileURLWithPath: "/bin/sleep"),
+          arguments: ["1"]
+        )
+      )
+    ) { error in
+      XCTAssertEqual(error as? CaptureWorkerSupervisorError, .alreadyRunning(pid: pid))
+    }
+    XCTAssertEqual(terminated.wait(timeout: .now() + 2), .success)
+    XCTAssertEqual(result.value?.pid, pid)
+    XCTAssertTrue(result.value?.killSent == true)
+  }
+
   private func waitForReadyLine(from pipe: Pipe, timeoutSeconds: TimeInterval = 2) -> Bool {
     let semaphore = DispatchSemaphore(value: 0)
     let buffer = ReadyLineBuffer()
@@ -93,6 +155,21 @@ final class CaptureWorkerSupervisorTests: XCTestCase {
     let ready = semaphore.wait(timeout: .now() + timeoutSeconds) == .success
     pipe.fileHandleForReading.readabilityHandler = nil
     return ready
+  }
+}
+
+private final class LockedTerminationResult: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: CaptureWorkerTerminationResult?
+
+  var value: CaptureWorkerTerminationResult? {
+    lock.withLock { stored }
+  }
+
+  func store(_ result: CaptureWorkerTerminationResult) {
+    lock.withLock {
+      stored = result
+    }
   }
 }
 

@@ -674,8 +674,11 @@ struct PrivacyObservationSignature: Sendable, Hashable {
     let policy = PathPolicy(deniedPrefixes: deniedPrefixes)
     if policy.deny(path) {
       let matched = deniedPrefixes.first { prefix in
+        let homeRelative = FileManager.default.homeDirectoryForCurrentUser
+          .appendingPathComponent(prefix).path
         let expanded = NSString(string: prefix).expandingTildeInPath
-        return path.hasPrefix(expanded) || path.hasPrefix(prefix)
+        return path.hasPrefix(expanded) || path.hasPrefix(homeRelative)
+          || path.hasPrefix(prefix) || path.contains("/" + prefix + "/")
       }
       return "denied:\(stableClassHash(matched ?? "path"))"
     }

@@ -89,6 +89,44 @@ final class EventCaptureSchedulerTests: XCTestCase {
     )
   }
 
+  func testIdleFallbackUsesMostRecentAcceptedTriggerAsReference() {
+    var cfg = Self.config()
+    cfg.eventCaptureIdleFallbackSeconds = 30
+    cfg.eventCaptureMinGapSeconds = 0
+    cfg.eventCaptureDebounceSeconds = 0
+    var scheduler = EventCaptureScheduler(config: cfg)
+    let start = Date(timeIntervalSince1970: 100)
+
+    XCTAssertEqual(
+      scheduler.observe(context: nil, clipboardChangeCount: 1, now: start),
+      [.idleFallback]
+    )
+    XCTAssertEqual(
+      scheduler.observe(
+        context: Self.context(windowTitle: "A"),
+        clipboardChangeCount: 1,
+        now: start.addingTimeInterval(15)
+      ),
+      []
+    )
+    XCTAssertEqual(
+      scheduler.observe(
+        context: Self.context(windowTitle: "A"),
+        clipboardChangeCount: 1,
+        now: start.addingTimeInterval(15.1)
+      ),
+      [.focusedWindow]
+    )
+    XCTAssertEqual(
+      scheduler.observe(context: nil, clipboardChangeCount: 1, now: start.addingTimeInterval(30)),
+      []
+    )
+    XCTAssertEqual(
+      scheduler.observe(context: nil, clipboardChangeCount: 1, now: start.addingTimeInterval(45.2)),
+      [.idleFallback]
+    )
+  }
+
   func testDisabledSchedulerIgnoresSignals() {
     var cfg = Self.config()
     cfg.eventCaptureEnabled = false
