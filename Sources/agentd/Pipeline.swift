@@ -810,7 +810,11 @@ actor FramePipeline {
       let textSource: FrameTextSource
       let axText = accessibilityText.map { AccessibilityTextExtractor.normalize($0.text) } ?? ""
       if !axText.isEmpty {
-        ocrResult = OCRResult(text: axText, confidence: 1, language: nil)
+        let visualRegions =
+          config.sparseFrameVisualRedactionEnabled && sparseFrameStore != nil
+          ? (try? await ocr.recognize(cgImage: frame.cgImage).regions) ?? []
+          : []
+        ocrResult = OCRResult(text: axText, confidence: 1, language: nil, regions: visualRegions)
         textSource = .accessibility
       } else {
         let ocrCacheKey = ImageContentHash.calculate(cgImage: frame.cgImage).map {

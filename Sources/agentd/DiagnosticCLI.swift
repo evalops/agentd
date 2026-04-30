@@ -694,7 +694,7 @@ enum SelftestDiagnostics {
     )
     return SelftestOutput(
       generatedAt: Date(),
-      permissions: DiagnosticPermissionSnapshot.current(promptForAccessibility: false),
+      permissions: displaySnapshot.permissions,
       displayProbe: displaySnapshot.displayProbe,
       displayCount: displaySnapshot.displays.count,
       configPath: ConfigStore.path.path,

@@ -395,6 +395,7 @@ final class AppController {
       scheduleFlushTimer()
     }
     if captureRunning, captureScopeChanged {
+      captureHealthWatchdog.observeCaptureStopped()
       await capture.stop()
       captureRunning = false
       idleMode = false
