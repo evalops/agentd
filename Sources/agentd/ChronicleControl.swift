@@ -30,6 +30,12 @@ struct CapturePolicy: Sendable, Codable, Equatable {
   var pauseWindowTitlePatterns: [String]
   var secretPatterns: [String]
   var cloudConsolidationTier: String
+  var domainTiers: [DomainTier]
+  var perBundleProfiles: [BundleCaptureProfile]
+  var behavioralClassification: BehavioralClassification?
+  var contextExtractors: [ContextExtractor]
+  var thrashAlerts: [ThrashRule]
+  var sessionBoundaryHooks: BoundaryHookConfig?
   var captureAllDisplays: Bool?
   var selectedDisplayIds: [UInt32]?
   var minBatchIntervalSeconds: Int
@@ -46,6 +52,12 @@ struct CapturePolicy: Sendable, Codable, Equatable {
     pauseWindowTitlePatterns: [String] = [],
     secretPatterns: [String] = [],
     cloudConsolidationTier: String = "",
+    domainTiers: [DomainTier] = [],
+    perBundleProfiles: [BundleCaptureProfile] = [],
+    behavioralClassification: BehavioralClassification? = nil,
+    contextExtractors: [ContextExtractor] = [],
+    thrashAlerts: [ThrashRule] = [],
+    sessionBoundaryHooks: BoundaryHookConfig? = nil,
     captureAllDisplays: Bool? = nil,
     selectedDisplayIds: [UInt32]? = nil,
     minBatchIntervalSeconds: Int = 0,
@@ -61,6 +73,12 @@ struct CapturePolicy: Sendable, Codable, Equatable {
     self.pauseWindowTitlePatterns = pauseWindowTitlePatterns
     self.secretPatterns = secretPatterns
     self.cloudConsolidationTier = cloudConsolidationTier
+    self.domainTiers = domainTiers
+    self.perBundleProfiles = perBundleProfiles
+    self.behavioralClassification = behavioralClassification
+    self.contextExtractors = contextExtractors
+    self.thrashAlerts = thrashAlerts
+    self.sessionBoundaryHooks = sessionBoundaryHooks
     self.captureAllDisplays = captureAllDisplays
     self.selectedDisplayIds = selectedDisplayIds
     self.minBatchIntervalSeconds = minBatchIntervalSeconds
@@ -78,6 +96,12 @@ struct CapturePolicy: Sendable, Codable, Equatable {
     case pauseWindowTitlePatterns
     case secretPatterns
     case cloudConsolidationTier
+    case domainTiers
+    case perBundleProfiles
+    case behavioralClassification
+    case contextExtractors
+    case thrashAlerts
+    case sessionBoundaryHooks
     case captureAllDisplays
     case selectedDisplayIds
     case minBatchIntervalSeconds
@@ -107,6 +131,24 @@ struct CapturePolicy: Sendable, Codable, Equatable {
         String.self,
         forKey: .cloudConsolidationTier
       ) ?? "",
+      domainTiers: try container.decodeIfPresent([DomainTier].self, forKey: .domainTiers) ?? [],
+      perBundleProfiles: try container.decodeIfPresent(
+        [BundleCaptureProfile].self,
+        forKey: .perBundleProfiles
+      ) ?? [],
+      behavioralClassification: try container.decodeIfPresent(
+        BehavioralClassification.self,
+        forKey: .behavioralClassification
+      ),
+      contextExtractors: try container.decodeIfPresent(
+        [ContextExtractor].self,
+        forKey: .contextExtractors
+      ) ?? [],
+      thrashAlerts: try container.decodeIfPresent([ThrashRule].self, forKey: .thrashAlerts) ?? [],
+      sessionBoundaryHooks: try container.decodeIfPresent(
+        BoundaryHookConfig.self,
+        forKey: .sessionBoundaryHooks
+      ),
       captureAllDisplays: try container.decodeIfPresent(Bool.self, forKey: .captureAllDisplays),
       selectedDisplayIds: try container.decodeIfPresent([UInt32].self, forKey: .selectedDisplayIds),
       minBatchIntervalSeconds: try container.decodeIfPresent(

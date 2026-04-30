@@ -156,6 +156,61 @@ final class PipelineTests: XCTestCase {
     XCTAssertEqual(batch.frames.count, 1)
   }
 
+  func testAuditDomainTierRedactsFrameContentButKeepsHostEvidence() async throws {
+    let recorder = BatchRecorder()
+    let pipeline = FramePipeline(config: Self.config(), ocr: StubOCR(text: "should not persist")) {
+      batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(
+      Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA),
+      context: Self.context(
+        windowTitle: "x timeline",
+        documentPath: "https://x.com/home?secret_path=redacted"
+      )
+    )
+    await pipeline.flush()
+
+    let batches = await recorder.snapshot()
+    let batch = try XCTUnwrap(batches.first)
+    let frame = try XCTUnwrap(batch.frames.first)
+    XCTAssertEqual(frame.tier, .audit)
+    XCTAssertEqual(frame.documentPath, "https://x.com")
+    XCTAssertEqual(frame.ocrText, "")
+    XCTAssertEqual(frame.ocrConfidence, 0)
+    XCTAssertEqual(batch.droppedCounts.deniedPath, 0)
+  }
+
+  func testBatchEmitsBehavioralCountsAndActiveArtifactMetadata() async throws {
+    let recorder = BatchRecorder()
+    let pipeline = FramePipeline(
+      config: Self.config(maxFramesPerBatch: 2), ocr: StubOCR(text: "pr")
+    ) {
+      batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(
+      Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA),
+      context: Self.context(documentPath: "https://github.com/evalops/platform/pull/1321")
+    )
+    await pipeline.consume(
+      Self.frame(bits: 0xBBBB_BBBB_BBBB_BBBB),
+      context: Self.context(documentPath: "https://github.com/evalops/agentd/issues/99")
+    )
+    await pipeline.flush()
+
+    let batches = await recorder.snapshot()
+    let batch = try XCTUnwrap(batches.first)
+    XCTAssertEqual(batch.emittedCounts.distinctDomains, 1)
+    XCTAssertEqual(batch.emittedCounts.distinctDocumentPaths, 2)
+    XCTAssertEqual(batch.emittedCounts.distinctGithubPrs, 1)
+    XCTAssertEqual(batch.emittedCounts.documentChanges, 1)
+    XCTAssertEqual(batch.metadata["activePullRequest"], "evalops/platform#1321")
+    XCTAssertEqual(batch.metadata["activeIssue"], "evalops/agentd#99")
+  }
+
   func testFailedSubmitKeepsBatchPendingForRetry() async throws {
     let recorder = BatchRecorder(result: .failed)
     let pipeline = FramePipeline(config: Self.config(), ocr: StubOCR(text: "clean")) { batch in
