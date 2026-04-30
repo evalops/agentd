@@ -338,13 +338,33 @@ enum ChronicleBehavior {
 
   private static func globMatches(_ pattern: String, _ value: String) -> Bool {
     let pattern = pattern.lowercased()
-    let value = value.lowercased()
-    if pattern == value || value.contains(pattern) {
-      return true
+    let candidates = matchCandidates(for: value)
+    if !pattern.contains("*") {
+      if pattern.contains("/") {
+        return candidates.contains(pattern)
+      }
+      return candidates.contains { candidate in
+        candidate == pattern || candidate.hasSuffix(".\(pattern)")
+      }
     }
     let escaped = NSRegularExpression.escapedPattern(for: pattern)
       .replacingOccurrences(of: "\\*", with: ".*")
-    return value.range(of: ".*\(escaped).*", options: .regularExpression) != nil
+    let expression = "^\(escaped)$"
+    return candidates.contains { candidate in
+      candidate.range(of: expression, options: .regularExpression) != nil
+    }
+  }
+
+  private static func matchCandidates(for value: String) -> [String] {
+    let value = value.lowercased()
+    var candidates = [value]
+    if let components = URLComponents(string: value), let host = components.host?.lowercased() {
+      candidates.append(host)
+      if !components.path.isEmpty {
+        candidates.append("\(host)\(components.path)")
+      }
+    }
+    return Array(Set(candidates))
   }
 
   private static func specificity(_ pattern: String) -> Int {
