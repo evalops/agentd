@@ -343,9 +343,8 @@ enum ChronicleBehavior {
       if pattern.contains("/") {
         return candidates.contains(pattern)
       }
-      return candidates.contains { candidate in
-        candidate == pattern || candidate.hasSuffix(".\(pattern)")
-      }
+      guard let hostCandidate = hostMatchCandidate(for: value) else { return false }
+      return hostCandidate == pattern || hostCandidate.hasSuffix(".\(pattern)")
     }
     let escaped = NSRegularExpression.escapedPattern(for: pattern)
       .replacingOccurrences(of: "\\*", with: ".*")
@@ -365,6 +364,15 @@ enum ChronicleBehavior {
       }
     }
     return Array(Set(candidates))
+  }
+
+  private static func hostMatchCandidate(for value: String) -> String? {
+    let value = value.lowercased()
+    if let components = URLComponents(string: value), let host = components.host?.lowercased() {
+      return host
+    }
+    let host = value.split(separator: "/", maxSplits: 1).first.map(String.init) ?? value
+    return host.isEmpty ? nil : host
   }
 
   private static func specificity(_ pattern: String) -> Int {

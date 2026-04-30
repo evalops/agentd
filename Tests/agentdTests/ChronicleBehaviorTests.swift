@@ -24,6 +24,10 @@ final class ChronicleBehaviorTests: XCTestCase {
       ChronicleBehavior.captureTier(for: "https://mobile.x.com/home", domainTiers: tiers),
       .audit
     )
+    XCTAssertEqual(
+      ChronicleBehavior.captureTier(for: "https://evil.com/config.x.com", domainTiers: tiers),
+      .evidence
+    )
   }
 
   func testUrlGlobMatchesHostPathWithoutSubstringFallback() {
