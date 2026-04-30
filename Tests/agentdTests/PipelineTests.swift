@@ -359,6 +359,24 @@ final class PipelineTests: XCTestCase {
     XCTAssertGreaterThan(dropped, 0)
   }
 
+  func testBufferedFrameDispatcherReportsTerminatedYieldsAsDropped() async throws {
+    let counts = DispatchCounts()
+    let dispatcher = BufferedFrameDispatcher(bufferingNewest: 2) { _ in
+      await counts.recordProcessed()
+    } onDropped: {
+      await counts.recordDropped()
+    }
+
+    dispatcher.finish()
+    XCTAssertFalse(dispatcher.yield(Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA)))
+
+    try await Task.sleep(nanoseconds: 50_000_000)
+    let processed = await counts.processed
+    let dropped = await counts.dropped
+    XCTAssertEqual(processed, 0)
+    XCTAssertEqual(dropped, 1)
+  }
+
   func testSparseFrameStoreWritesChronicleStyleArtifactsAfterScrub() async throws {
     let root = try Self.temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }

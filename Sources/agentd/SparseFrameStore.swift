@@ -149,7 +149,14 @@ actor SparseFrameStore {
       options: [.skipsHiddenFiles]
     )
     for url in urls {
-      let values = try url.resourceValues(forKeys: [.contentModificationDateKey, .isDirectoryKey])
+      guard
+        let values = try? url.resourceValues(forKeys: [
+          .contentModificationDateKey,
+          .isDirectoryKey,
+        ])
+      else {
+        continue
+      }
       guard let modified = values.contentModificationDate, modified < cutoff else { continue }
       try? FileManager.default.removeItem(at: url)
     }

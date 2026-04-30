@@ -693,10 +693,14 @@ final class BufferedFrameDispatcher: @unchecked Sendable {
     case .dropped:
       Task { await onDropped() }
       return false
-    case .enqueued, .terminated:
+    case .enqueued:
       return true
+    case .terminated:
+      Task { await onDropped() }
+      return false
     @unknown default:
-      return true
+      Task { await onDropped() }
+      return false
     }
   }
 
