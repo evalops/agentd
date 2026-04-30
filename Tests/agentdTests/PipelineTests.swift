@@ -844,6 +844,44 @@ final class PipelineTests: XCTestCase {
     XCTAssertEqual(batch.frames.first?.ocrText, "accessibility visible text")
   }
 
+  func testAccessibilityTextCollectsVisionRegionsForSparseFrameRedaction() async throws {
+    let root = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var cfg = Self.config()
+    cfg.sparseFrameStorageRoot = root.path
+    cfg.sparseFrameVisualRedactionEnabled = true
+    let recorder = BatchRecorder()
+    let ocr = CountingOCR(
+      text: "vision text",
+      regions: [
+        OCRTextRegion(
+          normalizedBoundingBox: CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+      ]
+    )
+    let pipeline = FramePipeline(config: cfg, ocr: ocr) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(
+      Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA),
+      context: Self.context(),
+      accessibilityText: AccessibilityTextResult(
+        text: "accessibility text",
+        nodesVisited: 3,
+        truncated: false
+      )
+    )
+    await pipeline.flush()
+
+    let callCount = await ocr.callCount()
+    XCTAssertEqual(callCount, 1)
+    let batches = await recorder.snapshot()
+    let batch = try XCTUnwrap(batches.first)
+    let frame = try XCTUnwrap(batch.frames.first)
+    XCTAssertEqual(frame.ocrText, "accessibility text")
+    XCTAssertEqual(frame.ocrTextRegions.count, 1)
+  }
+
   func testEmptyAccessibilityTextFallsBackToVisionOcr() async throws {
     let recorder = BatchRecorder()
     let ocr = CountingOCR(text: "vision fallback")
@@ -1071,15 +1109,17 @@ actor SequenceOCR: OCRRecognizing {
 
 actor CountingOCR: OCRRecognizing {
   private let text: String
+  private let regions: [OCRTextRegion]
   private var calls = 0
 
-  init(text: String) {
+  init(text: String, regions: [OCRTextRegion] = []) {
     self.text = text
+    self.regions = regions
   }
 
   func recognize(cgImage: CGImage) async throws -> OCRResult {
     calls += 1
-    return OCRResult(text: text, confidence: 0.9, language: "en")
+    return OCRResult(text: text, confidence: 0.9, language: "en", regions: regions)
   }
 
   func callCount() -> Int {

@@ -12,13 +12,6 @@ struct CaptureHealthStats: Sendable, Equatable {
   let lastRestartAt: Date?
   let lastRestartDisplayId: UInt32?
   let lastRestartReason: String?
-
-  static let empty = CaptureHealthStats(
-    restartCount: 0,
-    lastRestartAt: nil,
-    lastRestartDisplayId: nil,
-    lastRestartReason: nil
-  )
 }
 
 struct CaptureHealthWatchdog: Sendable {

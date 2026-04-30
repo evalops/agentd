@@ -50,11 +50,13 @@ enum AccessibilityTextExtractor {
     var stack: [(AXUIElement, Int)] = [(root, 0)]
     var textParts: [String] = []
     var seenText = Set<String>()
+    var seenElements = Set<CFHashCode>()
     var nodesVisited = 0
     var remainingChars = max(0, maxChars)
     var truncated = false
 
     while let (element, depth) = stack.popLast(), nodesVisited < maxNodes, remainingChars > 0 {
+      guard seenElements.insert(CFHash(element)).inserted else { continue }
       nodesVisited += 1
       for value in textValues(element) {
         let normalized = normalize(value)
@@ -70,8 +72,10 @@ enum AccessibilityTextExtractor {
       }
 
       guard depth < maxDepth, remainingChars > 0 else { continue }
-      var children = childElements(element, attribute: kAXChildrenAttribute)
-      children += childElements(element, attribute: kAXVisibleChildrenAttribute)
+      let children = uniqueChildren(
+        childElements(element, attribute: kAXChildrenAttribute)
+          + childElements(element, attribute: kAXVisibleChildrenAttribute)
+      )
       for child in children.reversed() {
         stack.append((child, depth + 1))
       }
@@ -122,6 +126,13 @@ enum AccessibilityTextExtractor {
       guard CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
       // swift-format-ignore
       return (value as! AXUIElement)
+    }
+  }
+
+  private static func uniqueChildren(_ children: [AXUIElement]) -> [AXUIElement] {
+    var seen = Set<CFHashCode>()
+    return children.filter { child in
+      seen.insert(CFHash(child)).inserted
     }
   }
 
