@@ -36,6 +36,8 @@ final class AppController {
   private var captureHealthWatchdog = CaptureHealthWatchdog()
   private var eventCaptureInFlight = false
   private var idleMode = false
+  private var lastForegroundIdentity: String?
+  private var lastForegroundIdentityChangedAt = Date()
 
   init() {
     let cfg = ConfigStore.load()
@@ -242,14 +244,36 @@ final class AppController {
       .combinedSessionState,
       eventType: CGEventType(rawValue: ~0)!
     )
-    let shouldIdle = idleSeconds >= config.idleThresholdSeconds
+    let context = WindowContextProbe.current()
+    let foregroundIdentity = [
+      context?.bundleId ?? "",
+      context?.windowTitle ?? "",
+      context?.documentPath ?? "",
+    ].joined(separator: "|")
+    if foregroundIdentity != lastForegroundIdentity {
+      lastForegroundIdentity = foregroundIdentity
+      lastForegroundIdentityChangedAt = Date()
+    }
+    let urlIdle =
+      config.urlChangeIdleThresholdSeconds > 0
+      && Date().timeIntervalSince(lastForegroundIdentityChangedAt)
+        >= config.urlChangeIdleThresholdSeconds
+    let inputIdle = idleSeconds >= config.idleThresholdSeconds
+    let shouldIdle = inputIdle || urlIdle
     guard shouldIdle != idleMode else { return }
 
     idleMode = shouldIdle
-    let fps = shouldIdle ? config.idleFps : config.captureFps
+    let bundleProfile = context.flatMap {
+      ChronicleBehavior.profile(for: $0.bundleId, profiles: config.perBundleProfiles)
+    }
+    let fps =
+      shouldIdle
+      ? (bundleProfile?.idleFps ?? config.idleFps)
+      : (bundleProfile?.eventDrivenOnly == true
+        ? 0 : (bundleProfile?.captureFps ?? config.captureFps))
     await capture.updateFps(fps)
     Log.capture.info(
-      "adaptive fps mode=\(shouldIdle ? "idle" : "active", privacy: .public) fps=\(fps, privacy: .public)"
+      "adaptive fps mode=\(shouldIdle ? "idle" : "active", privacy: .public) inputIdle=\(inputIdle, privacy: .public) urlIdle=\(urlIdle, privacy: .public) fps=\(fps, privacy: .public)"
     )
   }
 

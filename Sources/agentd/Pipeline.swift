@@ -28,6 +28,7 @@ struct ProcessedFrame: Sendable, Codable {
   let appName: String
   let windowTitle: String
   let documentPath: String?
+  let tier: CaptureTier
   let ocrText: String
   let ocrTextTruncated: Bool
   let ocrConfidence: Float
@@ -47,6 +48,7 @@ struct ProcessedFrame: Sendable, Codable {
     case appName
     case windowTitle
     case documentPath
+    case tier
     case ocrText
     case ocrTextTruncated
     case ocrConfidence
@@ -66,6 +68,7 @@ struct ProcessedFrame: Sendable, Codable {
     appName: String,
     windowTitle: String,
     documentPath: String?,
+    tier: CaptureTier = .evidence,
     ocrText: String,
     ocrTextTruncated: Bool = false,
     ocrConfidence: Float,
@@ -84,6 +87,7 @@ struct ProcessedFrame: Sendable, Codable {
     self.appName = appName
     self.windowTitle = windowTitle
     self.documentPath = documentPath
+    self.tier = tier
     self.ocrText = ocrText
     self.ocrTextTruncated = ocrTextTruncated
     self.ocrConfidence = ocrConfidence
@@ -110,6 +114,7 @@ struct ProcessedFrame: Sendable, Codable {
     appName = try container.decode(String.self, forKey: .appName)
     windowTitle = try container.decode(String.self, forKey: .windowTitle)
     documentPath = try container.decodeIfPresent(String.self, forKey: .documentPath)
+    tier = try container.decodeIfPresent(CaptureTier.self, forKey: .tier) ?? .evidence
     ocrText = try container.decode(String.self, forKey: .ocrText)
     ocrTextTruncated = try container.decodeIfPresent(Bool.self, forKey: .ocrTextTruncated) ?? false
     ocrConfidence = try container.decode(Float.self, forKey: .ocrConfidence)
@@ -143,6 +148,7 @@ struct ProcessedFrame: Sendable, Codable {
     try container.encode(appName, forKey: .appName)
     try container.encode(windowTitle, forKey: .windowTitle)
     try container.encodeIfPresent(documentPath, forKey: .documentPath)
+    try container.encode(tier, forKey: .tier)
     try container.encode(ocrText, forKey: .ocrText)
     try container.encode(ocrTextTruncated, forKey: .ocrTextTruncated)
     try container.encode(ocrConfidence, forKey: .ocrConfidence)
@@ -170,6 +176,7 @@ struct Batch: Sendable, Codable {
   let captureWindow: CaptureWindow
   let frames: [ProcessedFrame]
   let droppedCounts: DropCounts
+  let emittedCounts: EmittedCounts
 
   init(
     batchId: String,
@@ -184,7 +191,8 @@ struct Batch: Sendable, Codable {
     endedAt: Date,
     captureWindow: CaptureWindow? = nil,
     frames: [ProcessedFrame],
-    droppedCounts: DropCounts
+    droppedCounts: DropCounts,
+    emittedCounts: EmittedCounts = .empty
   ) {
     self.batchId = batchId
     self.deviceId = deviceId
@@ -199,6 +207,7 @@ struct Batch: Sendable, Codable {
     self.captureWindow = captureWindow ?? CaptureWindow(startedAt: startedAt, endedAt: endedAt)
     self.frames = frames
     self.droppedCounts = droppedCounts
+    self.emittedCounts = emittedCounts
   }
 
   enum CodingKeys: String, CodingKey {
@@ -215,6 +224,7 @@ struct Batch: Sendable, Codable {
     case captureWindow
     case frames
     case droppedCounts
+    case emittedCounts
   }
 
   init(from decoder: Decoder) throws {
@@ -234,7 +244,9 @@ struct Batch: Sendable, Codable {
       endedAt: endedAt,
       captureWindow: try container.decodeIfPresent(CaptureWindow.self, forKey: .captureWindow),
       frames: try container.decode([ProcessedFrame].self, forKey: .frames),
-      droppedCounts: try container.decode(DropCounts.self, forKey: .droppedCounts)
+      droppedCounts: try container.decode(DropCounts.self, forKey: .droppedCounts),
+      emittedCounts: try container.decodeIfPresent(EmittedCounts.self, forKey: .emittedCounts)
+        ?? .empty
     )
   }
 }
@@ -775,6 +787,15 @@ actor FramePipeline {
       return
     }
 
+    let captureTier = ChronicleBehavior.captureTier(
+      for: ctx.documentPath,
+      domainTiers: config.domainTiers
+    )
+    if captureTier == .deny {
+      droppedDeniedPath += 1
+      return
+    }
+
     guard let phash = PerceptualHash(cgImage: frame.cgImage) else { return }
     let duplicateByHash = dedupWindow.containsDuplicate(of: phash)
     if duplicateByHash, !config.ocrDiffSamplerEnabled {
@@ -783,32 +804,36 @@ actor FramePipeline {
     }
 
     let ocrResult: OCRResult
-    let textSource: FrameTextSource
-    let axText = accessibilityText.map { AccessibilityTextExtractor.normalize($0.text) } ?? ""
-    if !axText.isEmpty {
-      ocrResult = OCRResult(text: axText, confidence: 1, language: nil)
-      textSource = .accessibility
+    if captureTier == .audit {
+      ocrResult = OCRResult(text: "", confidence: 0, language: nil)
     } else {
-      let ocrCacheKey = ImageContentHash.calculate(cgImage: frame.cgImage).map {
-        OCRCacheKey(context: ctx, imageHash: $0)
-      }
-      if let ocrCacheKey, let cached = ocrCache.result(for: ocrCacheKey) {
-        ocrResult = cached
-        textSource = .cachedOCR
+      let textSource: FrameTextSource
+      let axText = accessibilityText.map { AccessibilityTextExtractor.normalize($0.text) } ?? ""
+      if !axText.isEmpty {
+        ocrResult = OCRResult(text: axText, confidence: 1, language: nil)
+        textSource = .accessibility
       } else {
-        do {
-          ocrResult = try await ocr.recognize(cgImage: frame.cgImage)
-          textSource = .visionOCR
-          if let ocrCacheKey {
-            ocrCache.insert(ocrResult, for: ocrCacheKey)
+        let ocrCacheKey = ImageContentHash.calculate(cgImage: frame.cgImage).map {
+          OCRCacheKey(context: ctx, imageHash: $0)
+        }
+        if let ocrCacheKey, let cached = ocrCache.result(for: ocrCacheKey) {
+          ocrResult = cached
+          textSource = .cachedOCR
+        } else {
+          do {
+            ocrResult = try await ocr.recognize(cgImage: frame.cgImage)
+            textSource = .visionOCR
+            if let ocrCacheKey {
+              ocrCache.insert(ocrResult, for: ocrCacheKey)
+            }
+          } catch {
+            Log.ocr.error("ocr failed: \(error.localizedDescription, privacy: .public)")
+            return
           }
-        } catch {
-          Log.ocr.error("ocr failed: \(error.localizedDescription, privacy: .public)")
-          return
         }
       }
+      textSourceCounts[textSource, default: 0] += 1
     }
-    textSourceCounts[textSource, default: 0] += 1
 
     switch evaluateSecretSurfaces(context: ctx, ocrText: ocrResult.text) {
     case .dropped(let reason):
@@ -854,7 +879,10 @@ actor FramePipeline {
       bundleId: ctx.bundleId,
       appName: ctx.appName,
       windowTitle: ctx.windowTitle,
-      documentPath: ctx.documentPath,
+      documentPath: captureTier == .audit
+        ? ChronicleBehavior.auditDocumentPath(ctx.documentPath)
+        : ctx.documentPath,
+      tier: captureTier,
       ocrText: ocrText.value,
       ocrTextTruncated: ocrText.truncated,
       ocrConfidence: ocrResult.confidence,
@@ -870,7 +898,7 @@ actor FramePipeline {
     pending.append(processed)
     dedupWindow.remember(phash)
     lastEmittedOcrText = ocrResult.text
-    if let sparseFrameStore {
+    if captureTier != .audit, let sparseFrameStore {
       do {
         try await sparseFrameStore.record(image: frame.cgImage, processed: processed)
       } catch {
@@ -887,6 +915,10 @@ actor FramePipeline {
 
   func flush() async {
     guard !pending.isEmpty || hasDrops() else { return }
+    let batchFrames = pending
+    let metadata = config.metadata.merging(
+      ChronicleBehavior.contextMetadata(for: batchFrames, extractors: config.contextExtractors)
+    ) { _, next in next }
     let batch = Batch(
       batchId: UUID().uuidString,
       deviceId: config.deviceId,
@@ -895,16 +927,21 @@ actor FramePipeline {
       userId: config.userId,
       projectId: config.projectId,
       repository: config.repository,
-      metadata: config.metadata,
+      metadata: metadata,
       startedAt: startedAt,
       endedAt: Date(),
-      frames: pending,
+      frames: batchFrames,
       droppedCounts: DropCounts(
         secret: droppedSecret,
         duplicate: droppedDup,
         deniedApp: droppedDeniedApp,
         deniedPath: droppedDeniedPath,
         droppedBackpressure: droppedBackpressure
+      ),
+      emittedCounts: ChronicleBehavior.emittedCounts(
+        for: batchFrames,
+        classification: config.behavioralClassification,
+        thrashRules: config.thrashAlerts
       )
     )
     pending.removeAll(keepingCapacity: true)

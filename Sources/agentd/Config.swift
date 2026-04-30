@@ -65,6 +65,12 @@ struct AgentConfig: Codable, Sendable {
   var deniedBundleIds: [String]
   var deniedPathPrefixes: [String]
   var pauseWindowTitlePatterns: [String]
+  var domainTiers: [DomainTier]
+  var perBundleProfiles: [BundleCaptureProfile]
+  var behavioralClassification: BehavioralClassification
+  var contextExtractors: [ContextExtractor]
+  var thrashAlerts: [ThrashRule]
+  var sessionBoundaryHooks: BoundaryHookConfig
   var captureAllDisplays: Bool
   var selectedDisplayIds: [UInt32]
   var captureFps: Double
@@ -75,6 +81,7 @@ struct AgentConfig: Codable, Sendable {
   var maxBatchBytes: Int64
   var maxBatchAgeDays: Double
   var idleThresholdSeconds: Double
+  var urlChangeIdleThresholdSeconds: Double
   var idlePollSeconds: Double
   var adaptiveOcrMinChars: Int
   var adaptiveOcrBackpressureThreshold: Int
@@ -110,6 +117,12 @@ struct AgentConfig: Codable, Sendable {
     case deniedBundleIds
     case deniedPathPrefixes
     case pauseWindowTitlePatterns
+    case domainTiers
+    case perBundleProfiles
+    case behavioralClassification
+    case contextExtractors
+    case thrashAlerts
+    case sessionBoundaryHooks
     case captureAllDisplays
     case selectedDisplayIds
     case captureFps
@@ -120,6 +133,7 @@ struct AgentConfig: Codable, Sendable {
     case maxBatchBytes
     case maxBatchAgeDays
     case idleThresholdSeconds
+    case urlChangeIdleThresholdSeconds
     case idlePollSeconds
     case adaptiveOcrMinChars
     case adaptiveOcrBackpressureThreshold
@@ -155,6 +169,12 @@ struct AgentConfig: Codable, Sendable {
     deniedBundleIds: [String],
     deniedPathPrefixes: [String],
     pauseWindowTitlePatterns: [String],
+    domainTiers: [DomainTier] = Self.defaultDomainTiers,
+    perBundleProfiles: [BundleCaptureProfile] = [],
+    behavioralClassification: BehavioralClassification = .default,
+    contextExtractors: [ContextExtractor] = ContextExtractor.defaults,
+    thrashAlerts: [ThrashRule] = [.githubPR],
+    sessionBoundaryHooks: BoundaryHookConfig = .default,
     captureAllDisplays: Bool = false,
     selectedDisplayIds: [UInt32] = [],
     captureFps: Double,
@@ -165,6 +185,7 @@ struct AgentConfig: Codable, Sendable {
     maxBatchBytes: Int64 = 512 * 1024 * 1024,
     maxBatchAgeDays: Double = 7,
     idleThresholdSeconds: Double = 60,
+    urlChangeIdleThresholdSeconds: Double = 30,
     idlePollSeconds: Double = 5,
     adaptiveOcrMinChars: Int = 1024,
     adaptiveOcrBackpressureThreshold: Int = 8,
@@ -198,6 +219,12 @@ struct AgentConfig: Codable, Sendable {
     self.deniedBundleIds = deniedBundleIds
     self.deniedPathPrefixes = deniedPathPrefixes
     self.pauseWindowTitlePatterns = pauseWindowTitlePatterns
+    self.domainTiers = domainTiers
+    self.perBundleProfiles = perBundleProfiles
+    self.behavioralClassification = behavioralClassification
+    self.contextExtractors = contextExtractors
+    self.thrashAlerts = thrashAlerts
+    self.sessionBoundaryHooks = sessionBoundaryHooks
     self.captureAllDisplays = captureAllDisplays
     self.selectedDisplayIds = selectedDisplayIds
     self.captureFps = captureFps
@@ -208,6 +235,7 @@ struct AgentConfig: Codable, Sendable {
     self.maxBatchBytes = maxBatchBytes
     self.maxBatchAgeDays = maxBatchAgeDays
     self.idleThresholdSeconds = idleThresholdSeconds
+    self.urlChangeIdleThresholdSeconds = urlChangeIdleThresholdSeconds
     self.idlePollSeconds = idlePollSeconds
     self.adaptiveOcrMinChars = adaptiveOcrMinChars
     self.adaptiveOcrBackpressureThreshold = adaptiveOcrBackpressureThreshold
@@ -252,6 +280,24 @@ struct AgentConfig: Codable, Sendable {
       currentValues: pauseWindowTitlePatterns,
       policyValues: policy.pauseWindowTitlePatterns
     )
+    if !policy.domainTiers.isEmpty {
+      next.domainTiers = policy.domainTiers
+    }
+    if !policy.perBundleProfiles.isEmpty {
+      next.perBundleProfiles = policy.perBundleProfiles
+    }
+    if let behavioralClassification = policy.behavioralClassification {
+      next.behavioralClassification = behavioralClassification
+    }
+    if !policy.contextExtractors.isEmpty {
+      next.contextExtractors = policy.contextExtractors
+    }
+    if !policy.thrashAlerts.isEmpty {
+      next.thrashAlerts = policy.thrashAlerts
+    }
+    if let hooks = policy.sessionBoundaryHooks {
+      next.sessionBoundaryHooks = hooks
+    }
 
     if policy.captureAllDisplays != nil {
       next.captureAllDisplays = policy.captureAllDisplays == true
@@ -312,6 +358,24 @@ struct AgentConfig: Codable, Sendable {
     pauseWindowTitlePatterns =
       try container.decodeIfPresent([String].self, forKey: .pauseWindowTitlePatterns)
       ?? Self.defaultPauseWindowPatterns
+    domainTiers =
+      try container.decodeIfPresent([DomainTier].self, forKey: .domainTiers)
+      ?? Self.defaultDomainTiers
+    perBundleProfiles =
+      try container.decodeIfPresent([BundleCaptureProfile].self, forKey: .perBundleProfiles) ?? []
+    behavioralClassification =
+      try container.decodeIfPresent(
+        BehavioralClassification.self,
+        forKey: .behavioralClassification
+      ) ?? .default
+    contextExtractors =
+      try container.decodeIfPresent([ContextExtractor].self, forKey: .contextExtractors)
+      ?? ContextExtractor.defaults
+    thrashAlerts =
+      try container.decodeIfPresent([ThrashRule].self, forKey: .thrashAlerts) ?? [.githubPR]
+    sessionBoundaryHooks =
+      try container.decodeIfPresent(BoundaryHookConfig.self, forKey: .sessionBoundaryHooks)
+      ?? .default
     captureAllDisplays =
       try container.decodeIfPresent(Bool.self, forKey: .captureAllDisplays) ?? false
     selectedDisplayIds =
@@ -327,6 +391,8 @@ struct AgentConfig: Codable, Sendable {
     maxBatchAgeDays = try container.decodeIfPresent(Double.self, forKey: .maxBatchAgeDays) ?? 7
     idleThresholdSeconds =
       try container.decodeIfPresent(Double.self, forKey: .idleThresholdSeconds) ?? 60
+    urlChangeIdleThresholdSeconds =
+      try container.decodeIfPresent(Double.self, forKey: .urlChangeIdleThresholdSeconds) ?? 30
     idlePollSeconds = try container.decodeIfPresent(Double.self, forKey: .idlePollSeconds) ?? 5
     adaptiveOcrMinChars =
       try container.decodeIfPresent(Int.self, forKey: .adaptiveOcrMinChars) ?? 1024
@@ -383,6 +449,14 @@ struct AgentConfig: Codable, Sendable {
     try container.encode(deniedBundleIds, forKey: .deniedBundleIds)
     try container.encode(deniedPathPrefixes, forKey: .deniedPathPrefixes)
     try container.encode(pauseWindowTitlePatterns, forKey: .pauseWindowTitlePatterns)
+    try container.encode(domainTiers, forKey: .domainTiers)
+    if !perBundleProfiles.isEmpty {
+      try container.encode(perBundleProfiles, forKey: .perBundleProfiles)
+    }
+    try container.encode(behavioralClassification, forKey: .behavioralClassification)
+    try container.encode(contextExtractors, forKey: .contextExtractors)
+    try container.encode(thrashAlerts, forKey: .thrashAlerts)
+    try container.encode(sessionBoundaryHooks, forKey: .sessionBoundaryHooks)
     try container.encode(captureAllDisplays, forKey: .captureAllDisplays)
     if !selectedDisplayIds.isEmpty {
       try container.encode(selectedDisplayIds, forKey: .selectedDisplayIds)
@@ -395,6 +469,7 @@ struct AgentConfig: Codable, Sendable {
     try container.encode(maxBatchBytes, forKey: .maxBatchBytes)
     try container.encode(maxBatchAgeDays, forKey: .maxBatchAgeDays)
     try container.encode(idleThresholdSeconds, forKey: .idleThresholdSeconds)
+    try container.encode(urlChangeIdleThresholdSeconds, forKey: .urlChangeIdleThresholdSeconds)
     try container.encode(idlePollSeconds, forKey: .idlePollSeconds)
     try container.encode(adaptiveOcrMinChars, forKey: .adaptiveOcrMinChars)
     try container.encode(
@@ -464,6 +539,14 @@ struct AgentConfig: Codable, Sendable {
     "Private Browsing", "Private", "Incognito",
   ]
 
+  static let defaultDomainTiers: [DomainTier] = [
+    DomainTier(pattern: "github.com/*/pull/*", tier: .evidence),
+    DomainTier(pattern: "github.com/*/issues/*", tier: .evidence),
+    DomainTier(pattern: "x.com", tier: .audit),
+    DomainTier(pattern: "twitter.com", tier: .audit),
+    DomainTier(pattern: "youtube.com", tier: .audit),
+  ]
+
   static func fallback() -> AgentConfig {
     AgentConfig(
       deviceId: ProcessInfo.processInfo.globallyUniqueString,
@@ -473,6 +556,12 @@ struct AgentConfig: Codable, Sendable {
       deniedBundleIds: defaultDeniedBundleIds,
       deniedPathPrefixes: defaultDeniedPathPrefixes,
       pauseWindowTitlePatterns: defaultPauseWindowPatterns,
+      domainTiers: defaultDomainTiers,
+      perBundleProfiles: [],
+      behavioralClassification: .default,
+      contextExtractors: ContextExtractor.defaults,
+      thrashAlerts: [.githubPR],
+      sessionBoundaryHooks: .default,
       captureAllDisplays: false,
       selectedDisplayIds: [],
       captureFps: 1.0,
@@ -483,6 +572,7 @@ struct AgentConfig: Codable, Sendable {
       maxBatchBytes: 512 * 1024 * 1024,
       maxBatchAgeDays: 7,
       idleThresholdSeconds: 60,
+      urlChangeIdleThresholdSeconds: 30,
       idlePollSeconds: 5,
       adaptiveOcrMinChars: 1024,
       adaptiveOcrBackpressureThreshold: 8,
