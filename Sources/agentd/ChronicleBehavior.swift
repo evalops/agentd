@@ -338,14 +338,14 @@ enum ChronicleBehavior {
 
   private static func globMatches(_ pattern: String, _ value: String) -> Bool {
     let pattern = pattern.lowercased()
-    let candidates = matchCandidates(for: value)
     if !pattern.contains("*") {
       if pattern.contains("/") {
-        return candidates.contains(pattern)
+        return matchCandidates(for: value).contains(pattern)
       }
       guard let hostCandidate = hostMatchCandidate(for: value) else { return false }
       return hostCandidate == pattern || hostCandidate.hasSuffix(".\(pattern)")
     }
+    let candidates = matchCandidates(for: value)
     let escaped = NSRegularExpression.escapedPattern(for: pattern)
       .replacingOccurrences(of: "\\*", with: ".*")
     let expression = "^\(escaped)$"
