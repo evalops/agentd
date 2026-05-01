@@ -66,6 +66,11 @@ local inspection of the shipped arm64 `codex_chronicle` helper bundled with
   changes, clicks, typing pauses, scroll stops, clipboard updates, and idle
   fallback ticks behind `eventCaptureEnabled`, with debounce/min-gap counters in
   diagnostics.
+- Drop accounting includes both broad `droppedCounts` and per-reason
+  `droppedReasonCounts` such as `privacy.browser_meeting_window`,
+  `privacy.denied_path`, `duplicate.phash`, `secret.ocrText:*`, `tier.deny`,
+  and `backpressure.buffer_full`, so downstream rollups can explain why evidence
+  is absent without exposing the dropped content.
 - Continuous capture has a local health watchdog that restarts ScreenCaptureKit
   streams when active displays stop producing frames, with restart counts in
   diagnostics.

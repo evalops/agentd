@@ -100,6 +100,19 @@ enum DiagnosticsReport {
       "- Sparse frame visual redaction: \(snapshot.config.sparseFrameVisualRedactionEnabled)"
     )
     lines.append("")
+    lines.append("## Drop Reason Guide")
+    lines.append("")
+    lines.append("| Prefix | Meaning |")
+    lines.append("| --- | --- |")
+    lines.append(
+      "| `privacy.*` | Window/app/path policy denied capture before OCR or persistence. |")
+    lines.append("| `tier.deny` | Domain tier policy explicitly denied this document surface. |")
+    lines.append("| `secret.*` | SecretScrubber found sensitive material and dropped the frame. |")
+    lines.append(
+      "| `duplicate.*` | Perceptual hash or OCR-diff sampling suppressed repeated content. |")
+    lines.append(
+      "| `backpressure.*` | In-memory dispatch pressure dropped frames before processing. |")
+    lines.append("")
     lines.append("## Event Capture")
     lines.append("")
     lines.append("| Trigger | Count |")

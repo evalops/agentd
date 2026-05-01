@@ -176,6 +176,7 @@ struct Batch: Sendable, Codable {
   let captureWindow: CaptureWindow
   let frames: [ProcessedFrame]
   let droppedCounts: DropCounts
+  let droppedReasonCounts: [String: Int]
   let emittedCounts: EmittedCounts
 
   init(
@@ -192,6 +193,7 @@ struct Batch: Sendable, Codable {
     captureWindow: CaptureWindow? = nil,
     frames: [ProcessedFrame],
     droppedCounts: DropCounts,
+    droppedReasonCounts: [String: Int] = [:],
     emittedCounts: EmittedCounts = .empty
   ) {
     self.batchId = batchId
@@ -207,6 +209,7 @@ struct Batch: Sendable, Codable {
     self.captureWindow = captureWindow ?? CaptureWindow(startedAt: startedAt, endedAt: endedAt)
     self.frames = frames
     self.droppedCounts = droppedCounts
+    self.droppedReasonCounts = droppedReasonCounts
     self.emittedCounts = emittedCounts
   }
 
@@ -224,6 +227,7 @@ struct Batch: Sendable, Codable {
     case captureWindow
     case frames
     case droppedCounts
+    case droppedReasonCounts
     case emittedCounts
   }
 
@@ -245,6 +249,10 @@ struct Batch: Sendable, Codable {
       captureWindow: try container.decodeIfPresent(CaptureWindow.self, forKey: .captureWindow),
       frames: try container.decode([ProcessedFrame].self, forKey: .frames),
       droppedCounts: try container.decode(DropCounts.self, forKey: .droppedCounts),
+      droppedReasonCounts: try container.decodeIfPresent(
+        [String: Int].self,
+        forKey: .droppedReasonCounts
+      ) ?? [:],
       emittedCounts: try container.decodeIfPresent(EmittedCounts.self, forKey: .emittedCounts)
         ?? .empty
     )
@@ -720,6 +728,7 @@ actor FramePipeline {
   private var droppedDeniedApp = 0
   private var droppedDeniedPath = 0
   private var droppedBackpressure = 0
+  private var droppedReasonCounts: [String: Int] = [:]
 
   private let onBatch: @Sendable (Batch) async -> SubmitResult
 
@@ -746,7 +755,7 @@ actor FramePipeline {
   }
 
   func recordBackpressureDrop() {
-    droppedBackpressure += 1
+    recordDrop(reason: "backpressure.buffer_full", kind: nil)
   }
 
   func pendingStats() -> PendingFrameStats {
@@ -778,12 +787,7 @@ actor FramePipeline {
       )
     }
     guard privacyDecision.allowed else {
-      switch privacyDecision.dropKind {
-      case .deniedPath:
-        droppedDeniedPath += 1
-      case .deniedApp, nil:
-        droppedDeniedApp += 1
-      }
+      recordDrop(reason: "privacy.\(privacyDecision.reasonCode)", kind: privacyDecision.dropKind)
       return
     }
 
@@ -792,14 +796,14 @@ actor FramePipeline {
       domainTiers: config.domainTiers
     )
     if captureTier == .deny {
-      droppedDeniedPath += 1
+      recordDrop(reason: "tier.deny", kind: .deniedPath)
       return
     }
 
     guard let phash = PerceptualHash(cgImage: frame.cgImage) else { return }
     let duplicateByHash = dedupWindow.containsDuplicate(of: phash)
     if duplicateByHash, !config.ocrDiffSamplerEnabled {
-      droppedDup += 1
+      recordDrop(reason: "duplicate.phash", kind: nil)
       return
     }
 
@@ -841,7 +845,7 @@ actor FramePipeline {
 
     switch evaluateSecretSurfaces(context: ctx, ocrText: ocrResult.text) {
     case .dropped(let reason):
-      droppedSecret += 1
+      recordDrop(reason: "secret.\(reason)", kind: nil)
       Log.scrub.warning("frame dropped secret=\(reason, privacy: .public)")
       return
     case .clean:
@@ -858,7 +862,7 @@ actor FramePipeline {
       {
         Log.capture.info("ocr diff sampler emitted pHash duplicate frame")
       } else {
-        droppedDup += 1
+        recordDrop(reason: "duplicate.phash", kind: nil)
         return
       }
     }
@@ -942,6 +946,7 @@ actor FramePipeline {
         deniedPath: droppedDeniedPath,
         droppedBackpressure: droppedBackpressure
       ),
+      droppedReasonCounts: droppedReasonCounts,
       emittedCounts: ChronicleBehavior.emittedCounts(
         for: batchFrames,
         classification: config.behavioralClassification,
@@ -954,6 +959,7 @@ actor FramePipeline {
     droppedDeniedApp = 0
     droppedDeniedPath = 0
     droppedBackpressure = 0
+    droppedReasonCounts.removeAll(keepingCapacity: true)
     startedAt = Date()
     let result = await onBatch(batch)
     guard case .failed = result else { return }
@@ -963,11 +969,34 @@ actor FramePipeline {
     droppedDeniedApp += batch.droppedCounts.deniedApp
     droppedDeniedPath += batch.droppedCounts.deniedPath
     droppedBackpressure += batch.droppedCounts.droppedBackpressure
+    for (reason, count) in batch.droppedReasonCounts {
+      droppedReasonCounts[reason, default: 0] += count
+    }
     startedAt = min(startedAt, batch.startedAt)
   }
 
   private func hasDrops() -> Bool {
     droppedSecret + droppedDup + droppedDeniedApp + droppedDeniedPath + droppedBackpressure > 0
+  }
+
+  private func recordDrop(reason: String, kind: PrivacyDropKind?) {
+    switch kind {
+    case .deniedPath:
+      droppedDeniedPath += 1
+    case .deniedApp:
+      droppedDeniedApp += 1
+    case nil:
+      if reason.hasPrefix("secret.") {
+        droppedSecret += 1
+      } else if reason.hasPrefix("duplicate.") {
+        droppedDup += 1
+      } else if reason.hasPrefix("backpressure.") {
+        droppedBackpressure += 1
+      } else {
+        droppedDeniedApp += 1
+      }
+    }
+    droppedReasonCounts[reason, default: 0] += 1
   }
 
   private func evaluateSecretSurfaces(context: WindowContext, ocrText: String)
