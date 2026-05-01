@@ -22,6 +22,7 @@ final class PipelineTests: XCTestCase {
     let batch = try XCTUnwrap(batches.first)
     XCTAssertEqual(batch.frames.count, 0)
     XCTAssertEqual(batch.droppedCounts.secret, 1)
+    XCTAssertEqual(batch.droppedReasonCounts["secret.windowTitle:aws_access_key"], 1)
   }
 
   func testDocumentPathSecretDropsFrame() async throws {
@@ -60,6 +61,7 @@ final class PipelineTests: XCTestCase {
     XCTAssertEqual(batch.frames.count, 0)
     XCTAssertEqual(batch.droppedCounts.deniedPath, 1)
     XCTAssertEqual(batch.droppedCounts.secret, 0)
+    XCTAssertEqual(batch.droppedReasonCounts["privacy.denied_path"], 1)
   }
 
   func testOcrTextIsCappedAfterFullTextSecretScan() async throws {
@@ -248,6 +250,7 @@ final class PipelineTests: XCTestCase {
     let batch = try XCTUnwrap(batches.first)
     XCTAssertEqual(batch.frames.count, 0)
     XCTAssertEqual(batch.droppedCounts.deniedApp, 1)
+    XCTAssertEqual(batch.droppedReasonCounts["privacy.denied_bundle"], 1)
   }
 
   func testPauseWindowTitleBeatsAllowedBundle() async throws {
@@ -363,6 +366,7 @@ final class PipelineTests: XCTestCase {
     let batch = try XCTUnwrap(batches.first)
     XCTAssertEqual(batch.frames.count, 1)
     XCTAssertEqual(batch.droppedCounts.duplicate, 1)
+    XCTAssertEqual(batch.droppedReasonCounts["duplicate.phash"], 1)
   }
 
   func testOcrDiffSamplerStaysDisabledByDefault() async throws {
@@ -647,6 +651,64 @@ final class PipelineTests: XCTestCase {
     XCTAssertTrue(second.allowed)
     XCTAssertTrue(second.cached)
     XCTAssertEqual(first.observationId, second.observationId)
+  }
+
+  func testBatchDroppedReasonCountsRoundTripAsOptionalWireField() throws {
+    let batch = Batch(
+      batchId: "batch_1",
+      deviceId: "device_1",
+      organizationId: "org_1",
+      workspaceId: nil,
+      userId: nil,
+      projectId: nil,
+      repository: nil,
+      startedAt: Date(timeIntervalSince1970: 1),
+      endedAt: Date(timeIntervalSince1970: 2),
+      frames: [],
+      droppedCounts: DropCounts(
+        secret: 1,
+        duplicate: 2,
+        deniedApp: 3,
+        deniedPath: 4,
+        droppedBackpressure: 5
+      ),
+      droppedReasonCounts: [
+        "secret.ocrText:openai_api_key": 1,
+        "privacy.browser_meeting_window": 3,
+      ]
+    )
+
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let data = try encoder.encode(batch)
+    let raw = String(data: data, encoding: .utf8) ?? ""
+    XCTAssertTrue(raw.contains("droppedReasonCounts"))
+
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let decoded = try decoder.decode(Batch.self, from: data)
+    XCTAssertEqual(decoded.droppedReasonCounts["privacy.browser_meeting_window"], 3)
+
+    let legacy = """
+      {
+        "batchId": "legacy",
+        "deviceId": "device_1",
+        "organizationId": "org_1",
+        "metadata": {},
+        "startedAt": "1970-01-01T00:00:01Z",
+        "endedAt": "1970-01-01T00:00:02Z",
+        "frames": [],
+        "droppedCounts": {
+          "secret": 0,
+          "duplicate": 0,
+          "deniedApp": 0,
+          "deniedPath": 0,
+          "droppedBackpressure": 0
+        }
+      }
+      """.data(using: .utf8)!
+    let legacyDecoded = try decoder.decode(Batch.self, from: legacy)
+    XCTAssertEqual(legacyDecoded.droppedReasonCounts, [:])
   }
 
   func testPrivacyDecisionCacheInvalidatesWhenTitleClassChanges() {

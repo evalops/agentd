@@ -113,6 +113,9 @@ final class DiagnosticsTests: XCTestCase {
     XCTAssertTrue(report.contains("Capture health restarts: 1"))
     XCTAssertTrue(report.contains("Last capture health restart display: 42"))
     XCTAssertTrue(report.contains("Last capture health restart reason: stale frame stream"))
+    XCTAssertTrue(report.contains("## Drop Reason Guide"))
+    XCTAssertTrue(report.contains("`privacy.*`"))
+    XCTAssertTrue(report.contains("`secret.*`"))
     XCTAssertTrue(report.contains("| focusedWindow | 2 |"))
     XCTAssertTrue(report.contains("| batch_1 |"))
     XCTAssertTrue(
