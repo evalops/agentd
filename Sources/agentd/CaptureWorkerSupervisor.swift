@@ -3,6 +3,12 @@
 import Darwin
 import Foundation
 
+protocol CaptureWorkerRunningState: AnyObject {
+  var isRunning: Bool { get }
+}
+
+extension Process: CaptureWorkerRunningState {}
+
 struct CaptureWorkerProcessSpec {
   let executableURL: URL
   let arguments: [String]
@@ -216,7 +222,6 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
 
   private func reapExitedProcessIfNeededLocked() {
     guard let current = process, !current.isRunning else { return }
-    current.waitUntilExit()
     process = nil
     if terminatingProcess === current {
       terminatingProcess = nil
@@ -238,14 +243,21 @@ final class CaptureWorkerSupervisor: @unchecked Sendable {
     }
   }
 
-  private static func wait(for process: Process, timeoutSeconds: TimeInterval) -> Bool {
+  static func waitUntilNotRunning(
+    _ process: CaptureWorkerRunningState,
+    timeoutSeconds: TimeInterval,
+    sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
+  ) -> Bool {
     let deadline = Date().addingTimeInterval(max(0, timeoutSeconds))
     while process.isRunning {
       let remaining = deadline.timeIntervalSinceNow
       guard remaining > 0 else { return false }
-      Thread.sleep(forTimeInterval: min(0.01, remaining))
+      sleep(min(0.01, remaining))
     }
-    process.waitUntilExit()
     return true
+  }
+
+  private static func wait(for process: Process, timeoutSeconds: TimeInterval) -> Bool {
+    waitUntilNotRunning(process, timeoutSeconds: timeoutSeconds)
   }
 }
