@@ -241,6 +241,66 @@ final class DiagnosticCLITests: XCTestCase {
     XCTAssertTrue(markdown.contains("secret.ocrText:openai: 1"))
   }
 
+  func testActivitySummaryExtractsActivePullRequestLabelMetadata() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 21_600)
+    try writeBatch(
+      ActivitySummaryTests.batch(
+        id: "batch_label_only",
+        startedAt: Date(timeIntervalSince1970: 7_000),
+        endedAt: Date(timeIntervalSince1970: 7_030),
+        frames: [],
+        metadata: [
+          "activePullRequest": "evalops/agentd#113",
+          "activePullRequest.firstSeenAt": "1970-01-01T01:56:40Z",
+          "activePullRequest.foregroundSeconds": "45",
+        ]
+      ),
+      to: root.appendingPathComponent("batch_label_only.json")
+    )
+
+    let summary = try await ActivitySummary.run(
+      options: ActivityOptions(sinceHours: 6, batchDirectory: root, windowLabel: "6h"),
+      now: now
+    )
+
+    XCTAssertEqual(summary.artifacts.map(\.label), ["evalops/agentd#113"])
+    XCTAssertEqual(summary.artifacts.first?.url, "evalops/agentd#113")
+    XCTAssertEqual(summary.artifacts.first?.foregroundSeconds, 45)
+  }
+
+  func testActivitySummaryIgnoresNonPullRequestGitHubDocumentPath() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 21_600)
+    try writeBatch(
+      ActivitySummaryTests.batch(
+        id: "batch_non_pr_url",
+        startedAt: Date(timeIntervalSince1970: 7_000),
+        endedAt: Date(timeIntervalSince1970: 7_030),
+        frames: [
+          ActivitySummaryTests.frame(
+            appName: "Google Chrome",
+            bundleId: "com.google.Chrome",
+            windowTitle: "cerebro",
+            documentPath: "https://github.com/evalops/cerebro#123",
+            capturedAt: Date(timeIntervalSince1970: 7_000),
+            displayId: 42
+          )
+        ]
+      ),
+      to: root.appendingPathComponent("batch_non_pr_url.json")
+    )
+
+    let summary = try await ActivitySummary.run(
+      options: ActivityOptions(sinceHours: 6, batchDirectory: root, windowLabel: "6h"),
+      now: now
+    )
+
+    XCTAssertTrue(summary.artifacts.isEmpty)
+  }
+
   func testActivitySummaryArtifactsWriteInstructionsAndResource() async throws {
     let batchRoot = try temporaryDirectory()
     let artifactRoot = try temporaryDirectory()
