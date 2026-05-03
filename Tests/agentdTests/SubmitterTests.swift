@@ -88,6 +88,7 @@ final class SubmitterTests: XCTestCase {
     XCTAssertTrue(cfg.allowedBundleIds.contains("com.openai.chat"))
     XCTAssertTrue(cfg.allowedBundleIds.contains("com.anthropic.claudefordesktop"))
     XCTAssertTrue(cfg.allowedBundleIds.contains("com.mitchellh.ghostty"))
+    XCTAssertTrue(cfg.allowedBundleIds.contains("com.apple.finder"))
     XCTAssertEqual(cfg.maxOcrTextChars, 4096)
     XCTAssertEqual(cfg.maxBatchBytes, 512 * 1024 * 1024)
 

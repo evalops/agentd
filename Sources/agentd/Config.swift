@@ -506,6 +506,7 @@ struct AgentConfig: Codable, Sendable {
     "com.openai.codex",
     "com.openai.chat",
     "com.anthropic.claudefordesktop",
+    "com.apple.finder",
     "company.thebrowser.Browser",  // Arc
     "com.google.Chrome",
     "com.google.Chrome.beta",

@@ -6,6 +6,32 @@ import XCTest
 @testable import agentd
 
 final class CaptureWorkerSupervisorTests: XCTestCase {
+  func testWaitUntilNotRunningReturnsWithoutReapingExitedProcess() {
+    let process = StubRunningState(isRunning: false)
+    var sleepCalls = 0
+
+    let exited = CaptureWorkerSupervisor.waitUntilNotRunning(
+      process,
+      timeoutSeconds: 10,
+      sleep: { _ in sleepCalls += 1 }
+    )
+
+    XCTAssertTrue(exited)
+    XCTAssertEqual(sleepCalls, 0)
+  }
+
+  func testWaitUntilNotRunningTimesOutWithoutBlocking() {
+    let process = StubRunningState(isRunning: true)
+
+    let exited = CaptureWorkerSupervisor.waitUntilNotRunning(
+      process,
+      timeoutSeconds: 0,
+      sleep: { _ in XCTFail("zero-timeout wait should not sleep") }
+    )
+
+    XCTAssertFalse(exited)
+  }
+
   func testTerminatesWorkerWithTermDuringGraceWindow() throws {
     let supervisor = CaptureWorkerSupervisor()
     let output = Pipe()
@@ -182,5 +208,13 @@ private final class ReadyLineBuffer: @unchecked Sendable {
       buffer.append(data)
       return String(data: buffer, encoding: .utf8)?.contains("ready\n") == true
     }
+  }
+}
+
+private final class StubRunningState: CaptureWorkerRunningState {
+  let isRunning: Bool
+
+  init(isRunning: Bool) {
+    self.isRunning = isRunning
   }
 }
