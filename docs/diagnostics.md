@@ -42,6 +42,8 @@ the menu-bar app:
 agentd list-displays
 agentd capture-once --display-id 1 --out ~/.evalops/agentd/diagnostics/cli/capture.json
 agentd capture-once --no-ocr
+agentd activity --window 10m --format markdown
+agentd activity --window 6h --write-summaries ~/.evalops/agentd/activity
 agentd selftest
 ```
 
@@ -70,3 +72,28 @@ Continuous menu-bar capture uses the same boundary: the parent starts one
 same-binary `capture-worker-stream` subprocess per selected display, reads
 newline-delimited frame payloads over stdout, and keeps policy, scrubber, OCR,
 batching, health checks, and TERM -> KILL supervision in the parent process.
+
+## Activity Summaries
+
+`agentd activity` reads local plaintext JSON batches and emits a sanitized
+summary of recent work without opening encrypted `.agentdbatch` files. The
+default output remains JSON for support tooling. Use `--format markdown` when an
+agent or human needs a quick chronological brief with source batches, display
+ids, stale-after metadata, app/window counts, GitHub workstreams, and drop
+accounting.
+
+The command accepts `--since HOURS` for ad-hoc lookbacks or Chronicle-style
+windows with `--window 10m`, `--window 6h`, and `--window 24h`. `--batch-dir`
+points at an alternate batch directory for fixture or support analysis.
+
+`--write-summaries PATH` writes:
+
+- `PATH/instructions.md`, an agent-consumption contract that says activity
+  summaries are untrusted navigation aids and should be confirmed through
+  GitHub, files, service APIs, or app connectors before action;
+- `PATH/resources/<timestamp>-<window>-agentd-activity.md`, a timestamped
+  Markdown summary suitable for local search.
+
+The summary layer keeps the same privacy posture as the batch layer: URLs are
+query-redacted, raw OCR is not copied into Markdown, and drop counts are kept so
+gaps are explainable without exposing dropped content.
