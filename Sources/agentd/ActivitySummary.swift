@@ -275,7 +275,7 @@ struct ActivitySummary: Codable, Sendable {
   }
 
   private static func githubPullRequestExtractedLabel(_ raw: String) -> String? {
-    guard let match = raw.firstMatch(of: #/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)#([0-9]+)/#) else {
+    guard let match = raw.wholeMatch(of: #/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)#([0-9]+)/#) else {
       return nil
     }
     return "\(match.1)/\(match.2)#\(match.3)"
