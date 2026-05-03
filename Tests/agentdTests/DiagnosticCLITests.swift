@@ -13,6 +13,7 @@ final class DiagnosticCLITests: XCTestCase {
     XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "capture-worker-once"]))
     XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "capture-worker-stream"]))
     XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "selftest"]))
+    XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "activity"]))
     XCTAssertFalse(DiagnosticCLI.shouldHandle(["agentd", "--local-only"]))
   }
 
@@ -92,6 +93,80 @@ final class DiagnosticCLITests: XCTestCase {
     }
   }
 
+  func testActivityParserAcceptsSinceAndBatchDir() throws {
+    let command = try DiagnosticCommand.parse([
+      "activity", "--since", "2.5", "--batch-dir", "/tmp/agentd-batches",
+    ])
+
+    guard case .activity(let options) = command else {
+      return XCTFail("expected activity")
+    }
+    XCTAssertEqual(options.sinceHours, 2.5)
+    XCTAssertEqual(options.batchDirectory.path, "/tmp/agentd-batches")
+  }
+
+  func testActivitySummaryAggregatesPersistedBatches() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_600)
+    try writeBatch(
+      ActivitySummaryTests.batch(
+        id: "batch_1",
+        startedAt: Date(timeIntervalSince1970: 3_000),
+        endedAt: Date(timeIntervalSince1970: 3_030),
+        frames: [
+          ActivitySummaryTests.frame(
+            appName: "Ghostty",
+            bundleId: "com.mitchellh.ghostty",
+            windowTitle: "Disable CodeQL across EvalOps",
+            documentPath: "https://sdk.cloud.google.com/auth?code=secret&state=abc&safe=keep"
+          ),
+          ActivitySummaryTests.frame(
+            appName: "Codex",
+            bundleId: "com.openai.codex",
+            windowTitle: "Codex"
+          ),
+        ],
+        droppedCounts: DropCounts(secret: 0, duplicate: 3, deniedApp: 1, deniedPath: 0),
+        droppedReasonCounts: ["duplicate.phash": 3, "privacy.allowlist_miss": 1]
+      ),
+      to: root.appendingPathComponent("batch_1.json")
+    )
+    try writeBatch(
+      ActivitySummaryTests.batch(
+        id: "old_batch",
+        startedAt: Date(timeIntervalSince1970: 1_000),
+        endedAt: Date(timeIntervalSince1970: 1_030),
+        frames: [
+          ActivitySummaryTests.frame(
+            appName: "Old", bundleId: "com.old.App", windowTitle: "Old work")
+        ]
+      ),
+      to: root.appendingPathComponent("old_batch.json")
+    )
+
+    let summary = try await ActivitySummary.run(
+      options: ActivityOptions(sinceHours: 0.5, batchDirectory: root),
+      now: now
+    )
+
+    XCTAssertEqual(summary.batchCount, 1)
+    XCTAssertEqual(summary.nonemptyBatchCount, 1)
+    XCTAssertEqual(summary.frameCount, 2)
+    XCTAssertEqual(summary.droppedCounts.duplicate, 3)
+    XCTAssertEqual(summary.droppedCounts.deniedApp, 1)
+    XCTAssertEqual(summary.droppedReasonCounts["duplicate.phash"], 3)
+    XCTAssertEqual(summary.apps.map(\.appName), ["Codex", "Ghostty"])
+    XCTAssertEqual(summary.windows.first?.windowTitle, "Codex")
+    XCTAssertTrue(summary.windows.contains { $0.windowTitle == "Disable CodeQL across EvalOps" })
+    let ghostty = try XCTUnwrap(
+      summary.windows.first { $0.windowTitle == "Disable CodeQL across EvalOps" })
+    XCTAssertEqual(
+      ghostty.documentPath,
+      "https://sdk.cloud.google.com/auth?code=REDACTED&state=REDACTED&safe=keep"
+    )
+  }
+
   func testDisplayDiagnosticsReturnsStructuredTimeout() async {
     let snapshot = await DisplayDiagnostics.snapshot(
       probe: SlowDisplayProbe(),
@@ -140,6 +215,64 @@ final class DiagnosticCLITests: XCTestCase {
 
     XCTAssertTrue(output.displayProbe.timedOut)
     XCTAssertEqual(output.displayCount, 0)
+  }
+
+  private func writeBatch(_ batch: Batch, to url: URL) throws {
+    try encodeSubmitBatchRequest(batch, localOnly: true).write(to: url)
+  }
+
+  private func temporaryDirectory() throws -> URL {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+  }
+}
+
+enum ActivitySummaryTests {
+  static func batch(
+    id: String,
+    startedAt: Date,
+    endedAt: Date,
+    frames: [ProcessedFrame],
+    droppedCounts: DropCounts = DropCounts(secret: 0, duplicate: 0, deniedApp: 0, deniedPath: 0),
+    droppedReasonCounts: [String: Int] = [:]
+  ) -> Batch {
+    Batch(
+      batchId: id,
+      deviceId: "device_1",
+      organizationId: "org_1",
+      workspaceId: nil,
+      userId: nil,
+      projectId: nil,
+      repository: nil,
+      startedAt: startedAt,
+      endedAt: endedAt,
+      frames: frames,
+      droppedCounts: droppedCounts,
+      droppedReasonCounts: droppedReasonCounts
+    )
+  }
+
+  static func frame(
+    appName: String,
+    bundleId: String,
+    windowTitle: String,
+    documentPath: String? = nil
+  ) -> ProcessedFrame {
+    ProcessedFrame(
+      frameHash: UUID().uuidString,
+      perceptualHash: 1,
+      capturedAt: Date(timeIntervalSince1970: 3_010),
+      bundleId: bundleId,
+      appName: appName,
+      windowTitle: windowTitle,
+      documentPath: documentPath,
+      ocrText: "",
+      ocrConfidence: 0,
+      widthPx: 8,
+      heightPx: 8,
+      bytesPng: 8 * 8 * 4
+    )
   }
 }
 
