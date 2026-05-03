@@ -71,6 +71,12 @@ local inspection of the shipped arm64 `codex_chronicle` helper bundled with
   `privacy.denied_path`, `duplicate.phash`, `secret.ocrText:*`, `tier.deny`,
   and `backpressure.buffer_full`, so downstream rollups can explain why evidence
   is absent without exposing the dropped content.
+- Local activity summaries can render recent sanitized batches as JSON or
+  Markdown with Chronicle-style source-batch provenance, display ids, stale-after
+  timestamps, drop accounting, and extracted GitHub workstreams. They can also
+  write local `instructions.md` plus `resources/*.md` files for agents to search
+  as a navigation aid before upgrading to GitHub, local files, service APIs, or
+  other source-of-truth connectors.
 - Continuous capture has a local health watchdog that restarts ScreenCaptureKit
   streams when active displays stop producing frames, with restart counts in
   diagnostics.
@@ -113,6 +119,8 @@ swift build
 swift run agentd       # foreground; menu-bar item appears
 swift run agentd -- list-displays
 swift run agentd -- capture-once --no-ocr
+swift run agentd -- activity --window 10m --format markdown
+swift run agentd -- activity --window 6h --write-summaries ~/.evalops/agentd/activity
 swift test
 python3 scripts/mock_chronicle.py --self-test Tests/Fixtures/chronicle
 python3 scripts/chronicle_parity_audit.py # compare installed Codex Chronicle helper
@@ -347,6 +355,14 @@ deduplication, pause checks, and full-text secret scanning. OCR sidecars store
 hashes and lengths by default; set `sparseFrameIncludeOcrText: true` only for
 explicit local debugging where raw OCR persistence is acceptable.
 
+For Chronicle-style local summaries, run `agentd activity --window 10m`,
+`--window 6h`, or `--window 24h`. `--format markdown` emits an agent-consumable
+summary to stdout; `--write-summaries ~/.evalops/agentd/activity` writes an
+`instructions.md` file plus timestamped Markdown resources under
+`resources/`. These summaries are generated from sanitized JSON batches only:
+encrypted `.agentdbatch` files remain unreadable without the configured local
+batch key, and raw OCR is not copied into the summary layer.
+
 `scripts/mock_chronicle.py` provides a strict local mock Chronicle and Secret
 Broker harness. CI validates the golden fixtures in `Tests/Fixtures/chronicle`
 so request-shape drift is explicit until generated `chronicle.v1` Swift types
@@ -357,6 +373,8 @@ are available.
 - Consume generated `chronicle.v1` Swift types when the platform SDK publishes
   them
   ([evalops/platform#1078](https://github.com/evalops/platform/issues/1078)).
+- Wire the local activity summary resources into the managed Chronicle
+  control-plane/reporting loop once Platform has the corresponding API shape.
 - Hardware-backed permission-flow smoke test for Screen Recording and
   Accessibility prompts.
 - macOS framework availability inventory: `docs/macos-availability.md`.
@@ -367,6 +385,7 @@ are available.
 Sources/agentd/
   main.swift              # NSApplication + AppController boot
   ChronicleControl.swift  # RegisterDevice/Heartbeat + policy response client
+  ActivitySummary.swift   # Sanitized local activity summaries/resources
   Diagnostics.swift       # Redacted local report generation
   PauseState.swift        # Manual/scheduled/policy pause precedence
   LaunchAtLoginController.swift # Native SMAppService login item toggle
@@ -376,6 +395,7 @@ Sources/agentd/
   VisionOCR.swift         # VNRecognizeTextRequest actor
   PerceptualHash.swift    # 8x8 mean-luma pHash
   SecretScrubber.swift    # NSRegularExpression fail-closed scrubber
+  URLPrivacyRedactor.swift # URL query redaction for local support surfaces
   Pipeline.swift          # frame → processed-frame → batch
   Submitter.swift         # HTTP/JSON SubmitBatch with local fallback
   MenuBarController.swift # NSStatusItem UI

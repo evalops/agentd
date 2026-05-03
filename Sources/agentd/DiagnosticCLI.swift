@@ -139,7 +139,15 @@ enum DiagnosticCLI {
         try writeJSON(payload, to: nil)
       case .activity(let options):
         let payload = try await ActivitySummary.run(options: options)
-        try writeJSON(payload, to: nil)
+        if let summaryRoot = options.summaryRoot {
+          _ = try ActivitySummaryArtifacts.write(payload, root: summaryRoot)
+        }
+        switch options.outputFormat {
+        case .json:
+          try writeJSON(payload, to: nil)
+        case .markdown:
+          try writeText(ActivitySummaryMarkdown.render(payload), to: nil)
+        }
       case .captureWorkerOnce(let options):
         let payload = try await CaptureWorkerDiagnostics.run(options: options)
         try writeJSON(payload, to: options.out)
@@ -174,16 +182,29 @@ enum DiagnosticCLI {
     }
   }
 
+  private static func writeText(_ text: String, to url: URL?) throws {
+    let data = Data(text.utf8)
+    if let url {
+      try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try data.write(to: url, options: .atomic)
+      try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    } else {
+      FileHandle.standardOutput.write(data)
+    }
+  }
+
   static let help = """
     Usage:
       agentd list-displays
       agentd capture-once [--display-id ID] [--no-ocr] [--out PATH]
-      agentd activity [--since HOURS] [--batch-dir PATH]
+      agentd activity [--since HOURS] [--window 10m|6h|24h] [--format json|markdown] [--batch-dir PATH] [--write-summaries PATH]
       agentd selftest
 
     Diagnostic commands emit redacted JSON and never start the menu-bar app.
     capture-once uses the normal privacy filters, SecretScrubber, and OCR pipeline.
     activity summarizes locally persisted JSON batches without reading encrypted batch files.
+    --write-summaries writes Chronicle-style instructions.md and resources/*.md locally.
 
     """
 }
