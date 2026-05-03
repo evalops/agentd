@@ -831,7 +831,7 @@ private func encodeSubmitBatchRequest(_ request: SubmitBatchRequest) throws -> D
   return try enc.encode(request)
 }
 
-private func decodeSubmitBatchRequest(_ data: Data) throws -> SubmitBatchRequest {
+func decodeSubmitBatchRequest(_ data: Data) throws -> SubmitBatchRequest {
   let dec = JSONDecoder()
   dec.dateDecodingStrategy = .iso8601
   return try dec.decode(SubmitBatchRequest.self, from: data)

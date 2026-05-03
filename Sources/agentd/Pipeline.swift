@@ -843,7 +843,17 @@ actor FramePipeline {
       textSourceCounts[textSource, default: 0] += 1
     }
 
-    switch evaluateSecretSurfaces(context: ctx, ocrText: ocrResult.text) {
+    let redactedDocumentPath = URLPrivacyRedactor.redactDocumentPath(ctx.documentPath)
+    let redactedContext = WindowContext(
+      bundleId: ctx.bundleId,
+      appName: ctx.appName,
+      windowTitle: ctx.windowTitle,
+      documentPath: redactedDocumentPath,
+      pid: ctx.pid,
+      timestamp: ctx.timestamp
+    )
+
+    switch evaluateSecretSurfaces(context: redactedContext, ocrText: ocrResult.text) {
     case .dropped(let reason):
       recordDrop(reason: "secret.\(reason)", kind: nil)
       Log.scrub.warning("frame dropped secret=\(reason, privacy: .public)")
@@ -889,7 +899,7 @@ actor FramePipeline {
       windowTitle: ctx.windowTitle,
       documentPath: captureTier == .audit
         ? ChronicleBehavior.auditDocumentPath(ctx.documentPath)
-        : ctx.documentPath,
+        : redactedDocumentPath,
       tier: captureTier,
       ocrText: ocrText.value,
       ocrTextTruncated: ocrText.truncated,

@@ -43,6 +43,31 @@ final class PipelineTests: XCTestCase {
     XCTAssertEqual(batch.droppedCounts.secret, 1)
   }
 
+  func testOAuthDocumentPathQueryIsRedactedBeforePersistence() async throws {
+    let recorder = BatchRecorder()
+    let pipeline = FramePipeline(config: Self.config(), ocr: StubOCR(text: "clean")) { batch in
+      await recorder.append(batch)
+    }
+
+    await pipeline.consume(
+      Self.frame(bits: 0xAAAA_AAAA_AAAA_AAAA),
+      context: Self.context(
+        documentPath:
+          "https://sdk.cloud.google.com/applicationdefaultauthcode.html?state=abc123&code=4/0AeoSecret&scope=email%20openid&authuser=0&prompt=consent&safe=keep"
+      )
+    )
+    await pipeline.flush()
+
+    let batches = await recorder.snapshot()
+    let frame = try XCTUnwrap(batches.first?.frames.first)
+    XCTAssertEqual(
+      frame.documentPath,
+      "https://sdk.cloud.google.com/applicationdefaultauthcode.html?state=REDACTED&code=REDACTED&scope=REDACTED&authuser=REDACTED&prompt=REDACTED&safe=keep"
+    )
+    XCTAssertFalse(frame.documentPath?.contains("4/0AeoSecret") == true)
+    XCTAssertFalse(frame.documentPath?.contains("abc123") == true)
+  }
+
   func testDeniedPathPrecedenceStillUsesPathPolicy() async throws {
     let recorder = BatchRecorder()
     let pipeline = FramePipeline(config: Self.config(), ocr: StubOCR(text: "clean")) { batch in

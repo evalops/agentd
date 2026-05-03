@@ -109,7 +109,7 @@ enum DiagnosticProbeRunner {
 enum DiagnosticCLI {
   static let handledCommands = [
     "list-displays", "capture-once", "capture-worker-once", "capture-worker-stream", "selftest",
-    "help", "--help", "-h",
+    "activity", "help", "--help", "-h",
   ]
 
   static func shouldHandle(_ arguments: [String]) -> Bool {
@@ -136,6 +136,9 @@ enum DiagnosticCLI {
         try writeJSON(payload, to: options.out)
       case .selftest:
         let payload = await SelftestDiagnostics.run()
+        try writeJSON(payload, to: nil)
+      case .activity(let options):
+        let payload = try await ActivitySummary.run(options: options)
         try writeJSON(payload, to: nil)
       case .captureWorkerOnce(let options):
         let payload = try await CaptureWorkerDiagnostics.run(options: options)
@@ -175,10 +178,12 @@ enum DiagnosticCLI {
     Usage:
       agentd list-displays
       agentd capture-once [--display-id ID] [--no-ocr] [--out PATH]
+      agentd activity [--since HOURS] [--batch-dir PATH]
       agentd selftest
 
     Diagnostic commands emit redacted JSON and never start the menu-bar app.
     capture-once uses the normal privacy filters, SecretScrubber, and OCR pipeline.
+    activity summarizes locally persisted JSON batches without reading encrypted batch files.
 
     """
 }
@@ -190,6 +195,7 @@ enum DiagnosticCommand: Equatable {
   case captureWorkerOnce(CaptureOnceOptions)
   case captureWorkerStream(CaptureStreamOptions)
   case selftest
+  case activity(ActivityOptions)
 
   static func parse(_ arguments: [String]) throws -> DiagnosticCommand {
     guard let command = arguments.first else { return .help }
@@ -209,6 +215,8 @@ enum DiagnosticCommand: Equatable {
     case "selftest":
       guard tail.isEmpty else { throw DiagnosticCLIError.usage("selftest takes no flags") }
       return .selftest
+    case "activity":
+      return .activity(try ActivityOptions.parse(tail))
     default:
       throw DiagnosticCLIError.usage("unknown diagnostic command '\(command)'")
     }
