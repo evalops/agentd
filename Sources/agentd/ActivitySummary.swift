@@ -194,7 +194,7 @@ struct ActivitySummary: Codable, Sendable {
       sourceBatchIds: sourceBatchIds.sorted(),
       displayIds: displayIds.sorted(),
       droppedCounts: dropped,
-      droppedReasonCounts: droppedReasonCounts.sortedByKey(),
+      droppedReasonCounts: droppedReasonCounts,
       apps: appCounters.map { key, count in
         ActivityAppSummary(appName: key.appName, bundleId: key.bundleId, frameCount: count)
       }.sorted(),
@@ -261,12 +261,24 @@ struct ActivitySummary: Codable, Sendable {
   }
 
   private static func githubPullRequestLabel(_ raw: String) -> String? {
-    guard let components = URLComponents(string: raw), components.host == "github.com" else {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let extractedLabel = githubPullRequestExtractedLabel(trimmed) {
+      return extractedLabel
+    }
+
+    guard let components = URLComponents(string: trimmed), components.host == "github.com" else {
       return nil
     }
     let parts = components.path.split(separator: "/").map(String.init)
     guard parts.count >= 4, parts[2] == "pull", let number = Int(parts[3]) else { return nil }
     return "\(parts[0])/\(parts[1])#\(number)"
+  }
+
+  private static func githubPullRequestExtractedLabel(_ raw: String) -> String? {
+    guard let match = raw.firstMatch(of: #/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)#([0-9]+)/#) else {
+      return nil
+    }
+    return "\(match.1)/\(match.2)#\(match.3)"
   }
 
   private static func isoDate(_ raw: String) -> Date? {
@@ -493,11 +505,5 @@ extension DropCounts {
       deniedPath: deniedPath + other.deniedPath,
       droppedBackpressure: droppedBackpressure + other.droppedBackpressure
     )
-  }
-}
-
-extension Dictionary where Key == String, Value == Int {
-  fileprivate func sortedByKey() -> [String: Int] {
-    Dictionary(uniqueKeysWithValues: sorted { $0.key < $1.key })
   }
 }
