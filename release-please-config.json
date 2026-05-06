@@ -1,0 +1,22 @@
+{
+  "include-component-in-tag": false,
+  "packages": {
+    ".": {
+      "package-name": "agentd",
+      "release-type": "simple",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "xml",
+          "path": "support/Info.plist",
+          "xpath": "/plist/dict/key[text()='CFBundleVersion']/following-sibling::string[1]"
+        },
+        {
+          "type": "xml",
+          "path": "support/Info.plist",
+          "xpath": "/plist/dict/key[text()='CFBundleShortVersionString']/following-sibling::string[1]"
+        }
+      ]
+    }
+  }
+}

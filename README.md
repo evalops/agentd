@@ -180,10 +180,14 @@ Application identity. To notarize and staple the bundle, either set
 `AGENTD_NOTARY_APPLE_ID`, `AGENTD_NOTARY_TEAM_ID`, and
 `AGENTD_NOTARY_PASSWORD`.
 
-The `package-release` GitHub Actions workflow performs the credential-backed
-release path and uploads the stapled app, archive, checksums, codesign details,
-and Gatekeeper assessment. Configure these repository secrets before dispatching
-it:
+Release Please opens version PRs from release-ready Conventional Commit PR
+titles. Merging a Release Please PR creates the GitHub release; the
+`release-please` workflow then calls `package-release` to build the notarized
+app, generate the signed Sparkle appcast, upload evidence artifacts, and attach
+the release assets. Release PRs keep `CHANGELOG.md`, `version.txt`,
+`.release-please-manifest.json`, and both `support/Info.plist` version fields
+in sync. Configure these repository secrets before relying on the automated
+release lane:
 
 - `AGENTD_CODESIGN_CERTIFICATE_P12`: base64-encoded Developer ID Application
   `.p12`.
@@ -197,10 +201,17 @@ it:
 - `AGENTD_SPARKLE_PUBLIC_ED_KEY`
 - `AGENTD_SPARKLE_PRIVATE_ED_KEY`: the private key text exported with Sparkle's
   `generate_keys -x`; store it as a secret and rotate it if exposed.
+- `AGENTD_RELEASE_TOKEN`: optional fine-grained PAT used by Release Please.
+  Configure it when release PR branches need normal `pull_request` CI runs;
+  otherwise the workflow falls back to `GITHUB_TOKEN`.
 
-The workflow also requires a `sparkle_download_url` dispatch input. It must be
-the final HTTPS URL where the uploaded `agentd.zip` will be served, because
-Sparkle validates the appcast enclosure URL before downloading the update.
+For manual packaging, dispatch `package-release` with either `release_tag` or
+`sparkle_download_url`. `release_tag` derives the final
+`https://github.com/evalops/agentd/releases/download/<tag>/agentd.zip` URL and
+can also attach the generated release assets when `upload_release_assets` is
+enabled. A direct `sparkle_download_url` must be the final HTTPS URL where the
+uploaded `agentd.zip` will be served, because Sparkle validates the appcast
+enclosure URL before downloading the update.
 
 `scripts/permission_smoke.sh` packages the app when needed, installs the tested
 bundle to `/Applications/EvalOps agentd.app` by default, records macOS
