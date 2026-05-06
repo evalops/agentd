@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
   issues: write
   pull-requests: write
@@ -31,6 +32,36 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           target-branch: main
+
+      - name: Dispatch CI for Release Please PRs
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRS_JSON: ${{ steps.release.outputs.prs }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          branches_file="$RUNNER_TEMP/release-pr-branches.txt"
+          python3 - <<'PY' > "$branches_file"
+          import json
+          import os
+
+          prs = json.loads(os.environ.get("PRS_JSON") or "[]")
+          for pr in prs:
+              branch = pr.get("headBranchName")
+              if branch:
+                  print(branch)
+          PY
+
+          if [[ ! -s "$branches_file" ]]; then
+            echo "::error::Release Please reported PRs but did not expose any headBranchName values."
+            exit 1
+          fi
+
+          while IFS= read -r branch; do
+            echo "Dispatching ci.yml for $branch"
+            gh workflow run ci.yml --repo "$REPO" --ref "$branch"
+          done < "$branches_file"
 
   package-release:
     name: package release
