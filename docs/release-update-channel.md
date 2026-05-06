@@ -69,8 +69,10 @@ non-Conventional titles are invisible to Release Please. Use titles such as
 For bot-created release PR branches to trigger normal PR checks, configure the
 optional `AGENTD_RELEASE_TOKEN` secret with a fine-grained token that can push
 branches and open pull requests in this repository. Without it, Release Please
-falls back to `GITHUB_TOKEN`; that can still update GitHub state, but events
-created by `GITHUB_TOKEN` may not start follow-on workflows.
+falls back to `GITHUB_TOKEN`; in that mode `release-please` explicitly
+dispatches `ci.yml` for the generated release PR branch because
+`workflow_dispatch` is the GitHub-supported exception for workflows triggered
+with `GITHUB_TOKEN`.
 
 For local appcast fixture testing without notarization, set
 `AGENTD_SPARKLE_ALLOW_UNNOTARIZED=1`; do not use that override in release
