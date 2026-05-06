@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/evalops/agentd/compare/v0.1.0...v0.2.0) (2026-05-06)
+
+
+### Features
+
+* default agentd clients to managed updates ([be17f08](https://github.com/evalops/agentd/commit/be17f0889fc7f29644bd243930440ebdfb632051))
+
 ## [0.1.0](https://github.com/evalops/agentd/compare/v0.0.2...v0.1.0) (2026-05-06)
 
 
