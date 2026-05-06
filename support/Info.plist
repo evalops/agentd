@@ -16,6 +16,18 @@
     <string>0.1.0</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
+    <key>SUFeedURL</key>
+    <string>https://github.com/evalops/agentd/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>iovo6pS38VtTLFtWFsJLWXqvzmJrLmPQc0/TYFwFAF4=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>3600</integer>
+    <key>SURequireSignedFeed</key>
+    <true/>
+    <key>SUVerifyUpdateBeforeExtraction</key>
+    <true/>
     <key>LSUIElement</key>
     <true/>
     <key>LSMinimumSystemVersion</key>
