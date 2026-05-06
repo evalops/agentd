@@ -1,6 +1,57 @@
 name: package-release
 
 on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: Artifact name prefix
+        required: false
+        type: string
+        default: agentd
+      configuration:
+        description: Swift build configuration
+        required: false
+        type: string
+        default: release
+      checkout_ref:
+        description: Git ref to package
+        required: false
+        type: string
+        default: ""
+      release_tag:
+        description: GitHub release tag to attach assets to
+        required: false
+        type: string
+        default: ""
+      sparkle_download_url:
+        description: HTTPS URL where the notarized agentd.zip update archive will be hosted
+        required: false
+        type: string
+        default: ""
+      upload_release_assets:
+        description: Upload packaged artifacts to release_tag
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      AGENTD_CODESIGN_CERTIFICATE_P12:
+        required: true
+      AGENTD_CODESIGN_CERTIFICATE_PASSWORD:
+        required: true
+      AGENTD_CODESIGN_IDENTITY:
+        required: true
+      AGENTD_NOTARY_APPLE_ID:
+        required: true
+      AGENTD_NOTARY_TEAM_ID:
+        required: true
+      AGENTD_NOTARY_PASSWORD:
+        required: true
+      AGENTD_SPARKLE_FEED_URL:
+        required: true
+      AGENTD_SPARKLE_PUBLIC_ED_KEY:
+        required: true
+      AGENTD_SPARKLE_PRIVATE_ED_KEY:
+        required: true
   workflow_dispatch:
     inputs:
       artifact_name:
@@ -13,10 +64,23 @@ on:
         default: release
       sparkle_download_url:
         description: HTTPS URL where the notarized agentd.zip update archive will be hosted
-        required: true
+        required: false
+      checkout_ref:
+        description: Git ref to package
+        required: false
+        default: ""
+      release_tag:
+        description: GitHub release tag to attach assets to
+        required: false
+        default: ""
+      upload_release_assets:
+        description: Upload packaged artifacts to release_tag after packaging
+        required: false
+        type: boolean
+        default: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   package-release:
@@ -25,6 +89,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.checkout_ref || inputs.release_tag || github.ref }}
 
       - name: Select Swift 6 toolchain
         run: |
@@ -42,6 +108,32 @@ jobs:
           done
           swift --version
 
+      - name: Resolve release metadata
+        id: release
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_SPARKLE_DOWNLOAD_URL: ${{ inputs.sparkle_download_url }}
+        run: |
+          set -euo pipefail
+          release_tag="$INPUT_RELEASE_TAG"
+          sparkle_download_url="$INPUT_SPARKLE_DOWNLOAD_URL"
+          if [[ -z "$sparkle_download_url" && -n "$release_tag" ]]; then
+            sparkle_download_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}/agentd.zip"
+          fi
+          if [[ -z "$sparkle_download_url" ]]; then
+            echo "::error::Provide sparkle_download_url or release_tag so Sparkle can verify the final archive URL."
+            exit 1
+          fi
+          release_notes_url=""
+          if [[ -n "$release_tag" ]]; then
+            release_notes_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${release_tag}"
+          fi
+          {
+            echo "release_tag=$release_tag"
+            echo "sparkle_download_url=$sparkle_download_url"
+            echo "release_notes_url=$release_notes_url"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Require release secrets
         env:
           AGENTD_CODESIGN_CERTIFICATE_P12: ${{ secrets.AGENTD_CODESIGN_CERTIFICATE_P12 }}
@@ -53,7 +145,7 @@ jobs:
           AGENTD_SPARKLE_FEED_URL: ${{ secrets.AGENTD_SPARKLE_FEED_URL }}
           AGENTD_SPARKLE_PUBLIC_ED_KEY: ${{ secrets.AGENTD_SPARKLE_PUBLIC_ED_KEY }}
           AGENTD_SPARKLE_PRIVATE_ED_KEY: ${{ secrets.AGENTD_SPARKLE_PRIVATE_ED_KEY }}
-          AGENTD_SPARKLE_DOWNLOAD_URL: ${{ inputs.sparkle_download_url }}
+          AGENTD_SPARKLE_DOWNLOAD_URL: ${{ steps.release.outputs.sparkle_download_url }}
         run: |
           set -euo pipefail
           missing=0
@@ -117,7 +209,8 @@ jobs:
           AGENTD_NOTARY_PASSWORD: ${{ secrets.AGENTD_NOTARY_PASSWORD }}
           AGENTD_SPARKLE_FEED_URL: ${{ secrets.AGENTD_SPARKLE_FEED_URL }}
           AGENTD_SPARKLE_PUBLIC_ED_KEY: ${{ secrets.AGENTD_SPARKLE_PUBLIC_ED_KEY }}
-          AGENTD_SPARKLE_DOWNLOAD_URL: ${{ inputs.sparkle_download_url }}
+          AGENTD_SPARKLE_DOWNLOAD_URL: ${{ steps.release.outputs.sparkle_download_url }}
+          AGENTD_SPARKLE_RELEASE_NOTES_URL: ${{ steps.release.outputs.release_notes_url }}
           AGENTD_SPARKLE_ED_KEY_FILE: ${{ runner.temp }}/sparkle-ed25519.key
           AGENTD_SPARKLE_REQUIRE_SIGNED_FEED: "1"
         run: scripts/package_app.sh
@@ -149,3 +242,19 @@ jobs:
             dist/codesign.txt
             dist/spctl.txt
           if-no-files-found: error
+
+      - name: Upload GitHub release assets
+        if: ${{ (inputs.upload_release_assets == true || inputs.upload_release_assets == 'true') && inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" \
+            dist/agentd.zip \
+            dist/SHA256SUMS \
+            dist/update-channel.json \
+            dist/appcast.xml \
+            dist/codesign.txt \
+            dist/spctl.txt \
+            --clobber
