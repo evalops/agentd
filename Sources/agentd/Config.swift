@@ -53,6 +53,20 @@ enum AuthMode: Sendable, Codable, Equatable {
 }
 
 struct AgentConfig: Codable, Sendable {
+  static let defaultManagedOrganizationId = "evalops"
+  static let defaultManagedEndpoint = URL(
+    string: "https://chronicle.evalops.dev/chronicle.v1.ChronicleService/SubmitBatch")!
+  static let defaultLocalEndpoint = URL(
+    string: "http://127.0.0.1:8787/chronicle.v1.ChronicleService/SubmitBatch")!
+  static let defaultManagedKeychainService = "dev.evalops.agentd"
+  static let defaultManagedKeychainAccount = "chronicle"
+  static var defaultManagedAuth: AuthMode {
+    .bearer(
+      keychainService: defaultManagedKeychainService,
+      keychainAccount: defaultManagedKeychainAccount
+    )
+  }
+
   var deviceId: String
   var organizationId: String
   var workspaceId: String?
@@ -334,10 +348,11 @@ struct AgentConfig: Codable, Sendable {
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     deviceId = try container.decode(String.self, forKey: .deviceId)
+    let decodedLocalOnly = try container.decodeIfPresent(Bool.self, forKey: .localOnly) ?? false
     organizationId =
       try container.decodeIfPresent(String.self, forKey: .organizationId)
       ?? container.decodeIfPresent(String.self, forKey: .orgId)
-      ?? "local"
+      ?? (decodedLocalOnly ? "local" : Self.defaultManagedOrganizationId)
     workspaceId = try container.decodeIfPresent(String.self, forKey: .workspaceId)
     userId = try container.decodeIfPresent(String.self, forKey: .userId)
     projectId = try container.decodeIfPresent(String.self, forKey: .projectId)
@@ -345,7 +360,9 @@ struct AgentConfig: Codable, Sendable {
     metadata = EvalOpsContextMetadata.clean(
       try container.decodeIfPresent([String: String].self, forKey: .metadata) ?? [:]
     )
-    endpoint = try container.decode(URL.self, forKey: .endpoint)
+    endpoint =
+      try container.decodeIfPresent(URL.self, forKey: .endpoint)
+      ?? (decodedLocalOnly ? Self.defaultLocalEndpoint : Self.defaultManagedEndpoint)
     allowedBundleIds =
       try container.decodeIfPresent([String].self, forKey: .allowedBundleIds)
       ?? Self.defaultAllowedBundleIds
@@ -425,8 +442,10 @@ struct AgentConfig: Codable, Sendable {
       try container.decodeIfPresent(Bool.self, forKey: .sparseFrameIncludeOcrText) ?? false
     sparseFrameVisualRedactionEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .sparseFrameVisualRedactionEnabled) ?? false
-    localOnly = try container.decodeIfPresent(Bool.self, forKey: .localOnly) ?? true
-    auth = try container.decodeIfPresent(AuthMode.self, forKey: .auth) ?? .none
+    localOnly = decodedLocalOnly
+    auth =
+      try container.decodeIfPresent(AuthMode.self, forKey: .auth)
+      ?? (localOnly ? .none : Self.defaultManagedAuth)
     secretBroker = try container.decodeIfPresent(SecretBrokerConfig.self, forKey: .secretBroker)
     encryptLocalBatches =
       try container.decodeIfPresent(Bool.self, forKey: .encryptLocalBatches)
@@ -551,8 +570,8 @@ struct AgentConfig: Codable, Sendable {
   static func fallback() -> AgentConfig {
     AgentConfig(
       deviceId: ProcessInfo.processInfo.globallyUniqueString,
-      organizationId: "local",
-      endpoint: URL(string: "http://127.0.0.1:8787/chronicle.v1.ChronicleService/SubmitBatch")!,
+      organizationId: defaultManagedOrganizationId,
+      endpoint: defaultManagedEndpoint,
       allowedBundleIds: defaultAllowedBundleIds,
       deniedBundleIds: defaultDeniedBundleIds,
       deniedPathPrefixes: defaultDeniedPathPrefixes,
@@ -590,9 +609,9 @@ struct AgentConfig: Codable, Sendable {
       sparseFrameRetentionHours: 6,
       sparseFrameIncludeOcrText: false,
       sparseFrameVisualRedactionEnabled: false,
-      localOnly: true,
-      encryptLocalBatches: false,
-      auth: .none,
+      localOnly: false,
+      encryptLocalBatches: true,
+      auth: defaultManagedAuth,
       secretBroker: nil
     )
   }

@@ -163,14 +163,15 @@ the bundle shape, embedded Sparkle framework, and entitlements are continuously
 checked. Ad-hoc packages add `disable-library-validation` only for the local
 signature so the embedded Sparkle framework can load; set
 `AGENTD_ADHOC_DISABLE_LIBRARY_VALIDATION=0` to test without that local escape
-hatch. Release builds inject `AGENTD_SPARKLE_FEED_URL` and
-`AGENTD_SPARKLE_PUBLIC_ED_KEY` so the menu bar's "Check for Updates..." action
-can use Sparkle. When `AGENTD_SPARKLE_DOWNLOAD_URL` is set, the package script
-signs the final zip with Sparkle EdDSA, writes `dist/appcast.xml`, and verifies
-that the appcast enclosure URL, signature, version, and archive length match the
-packaged artifact. Release workflow builds also enable Sparkle signed-feed
-validation so compromised update metadata cannot redirect users to a different
-archive. To dry-run Sparkle's update discovery against a packaged bundle, use
+hatch. Packaged clients include the signed GitHub Sparkle feed by default, with
+automatic checks enabled and signed-feed validation required, so new installs
+receive the notarized release channel without extra local configuration.
+Release builds may still inject `AGENTD_SPARKLE_FEED_URL` and
+`AGENTD_SPARKLE_PUBLIC_ED_KEY` to override the embedded feed/key. When
+`AGENTD_SPARKLE_DOWNLOAD_URL` is set, the package script signs the final zip
+with Sparkle EdDSA, writes `dist/appcast.xml`, and verifies that the appcast
+enclosure URL, signature, version, and archive length match the packaged
+artifact. To dry-run Sparkle's update discovery against a packaged bundle, use
 `scripts/sparkle_update_probe.sh` with `AGENTD_SPARKLE_PROBE_FEED_URL` or a
 local `dist/appcast.xml`.
 
@@ -233,7 +234,9 @@ does not install LaunchAgent plists.
 
 agentd reads and writes `~/.evalops/agentd/config.json`. Important defaults:
 
-- `localOnly: true`
+- `organizationId: "evalops"`
+- `endpoint: "https://chronicle.evalops.dev/chronicle.v1.ChronicleService/SubmitBatch"`
+- `localOnly: false`
 - `captureFps: 1.0`
 - `idleFps: 0.2`
 - `idleThresholdSeconds: 60`
@@ -259,9 +262,8 @@ agentd reads and writes `~/.evalops/agentd/config.json`. Important defaults:
 - `maxOcrTextChars: 4096`
 - `maxBatchAgeDays: 7`
 - `maxBatchBytes: 536870912`
-- `encryptLocalBatches: false` in local-only mode, `true` in remote or Secret
-  Broker mode when omitted
-- `auth: { "mode": "none" }`
+- `encryptLocalBatches: true` in managed or Secret Broker mode when omitted
+- `auth: { "mode": "bearer", "keychainService": "dev.evalops.agentd", "keychainAccount": "chronicle" }`
 
 Optional `metadata` entries are copied into every Chronicle `FrameBatch` and
 Secret Broker wrap request. Use this for non-secret correlation IDs such as
@@ -273,6 +275,12 @@ Chronicle graph labels. agentd centralizes the `evalops.context.v1` keys in
 canonical values such as invalid `traceparent` strings. This mirrors the
 Platform envelope contract and Maestro emitter shape tracked in
 evalops/platform#1201 and evalops/maestro-internal#1538.
+
+New configs default to managed Chronicle mode. The onboarding/install path must
+place the bearer token in Keychain service `dev.evalops.agentd`, account
+`chronicle`; the token's organization must match `organizationId`. Set
+`localOnly: true` to opt into a local dev client, which defaults back to the
+loopback Chronicle endpoint and `auth: { "mode": "none" }`.
 
 Remote mode requires `localOnly: false`, an HTTPS or loopback endpoint, and an
 auth mode. Bearer auth references a Keychain item:
@@ -321,7 +329,7 @@ RPC URLs from `endpoint`. For example:
 
 ```json
 {
-  "endpoint": "https://chronicle.example.com/chronicle.v1.ChronicleService/SubmitBatch",
+  "endpoint": "https://chronicle.evalops.dev/chronicle.v1.ChronicleService/SubmitBatch",
   "localOnly": false,
   "auth": {
     "mode": "bearer",

@@ -68,7 +68,7 @@ final class AppController {
         maxBatchBytes: cfg.maxBatchBytes,
         maxBatchAgeDays: cfg.maxBatchAgeDays,
         deviceId: cfg.deviceId,
-        encryptLocalBatches: false
+        encryptLocalBatches: cfg.encryptLocalBatches
       )
     }
     self.submitter = submitter

@@ -25,6 +25,28 @@ final class SparkleUpdaterConfigurationTests: XCTestCase {
     XCTAssertTrue(presentation.isConfigured)
   }
 
+  func testBundleInfoPlistEnablesSignedReleaseUpdatesByDefault() throws {
+    let plistURL = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .appendingPathComponent("support/Info.plist")
+    let info = try XCTUnwrap(NSDictionary(contentsOf: plistURL) as? [String: Any])
+
+    let cfg = SparkleUpdaterConfiguration.read(from: info)
+
+    XCTAssertTrue(cfg.isConfigured)
+    XCTAssertEqual(
+      cfg.feedURL?.absoluteString,
+      "https://github.com/evalops/agentd/releases/latest/download/appcast.xml"
+    )
+    XCTAssertEqual(cfg.publicEDKey, "iovo6pS38VtTLFtWFsJLWXqvzmJrLmPQc0/TYFwFAF4=")
+    XCTAssertEqual(info["SUEnableAutomaticChecks"] as? Bool, true)
+    XCTAssertEqual(info["SUScheduledCheckInterval"] as? Int, 3600)
+    XCTAssertEqual(info["SURequireSignedFeed"] as? Bool, true)
+    XCTAssertEqual(info["SUVerifyUpdateBeforeExtraction"] as? Bool, true)
+  }
+
   func testDisabledWithoutFeedOrPublicKey() {
     let cfg = SparkleUpdaterConfiguration.read(from: [:])
 

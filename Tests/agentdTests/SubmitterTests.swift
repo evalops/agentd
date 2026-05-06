@@ -113,6 +113,39 @@ final class SubmitterTests: XCTestCase {
     XCTAssertEqual(cfg.organizationId, "org_new")
   }
 
+  func testAgentConfigDefaultsNewClientsToManagedChronicle() throws {
+    let data = """
+      {
+        "deviceId": "device_1"
+      }
+      """.data(using: .utf8)!
+
+    let cfg = try JSONDecoder().decode(AgentConfig.self, from: data)
+
+    XCTAssertFalse(cfg.localOnly)
+    XCTAssertEqual(cfg.organizationId, AgentConfig.defaultManagedOrganizationId)
+    XCTAssertEqual(cfg.endpoint, AgentConfig.defaultManagedEndpoint)
+    XCTAssertEqual(cfg.auth, AgentConfig.defaultManagedAuth)
+    XCTAssertTrue(cfg.encryptLocalBatches)
+  }
+
+  func testAgentConfigKeepsExplicitLocalOnlyConfigsLocalByDefault() throws {
+    let data = """
+      {
+        "deviceId": "device_1",
+        "localOnly": true
+      }
+      """.data(using: .utf8)!
+
+    let cfg = try JSONDecoder().decode(AgentConfig.self, from: data)
+
+    XCTAssertTrue(cfg.localOnly)
+    XCTAssertEqual(cfg.organizationId, "local")
+    XCTAssertEqual(cfg.endpoint, AgentConfig.defaultLocalEndpoint)
+    XCTAssertEqual(cfg.auth, .none)
+    XCTAssertFalse(cfg.encryptLocalBatches)
+  }
+
   func testAgentConfigDecodesAndCleansMetadata() throws {
     let data = """
       {

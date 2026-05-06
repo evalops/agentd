@@ -18,21 +18,23 @@ The signed update-channel path is intentionally evidence-first:
 8. Publish update metadata only after the archive checksum, Sparkle signature,
    signing identity, notarization request id, and Gatekeeper output are recorded.
 
-Sparkle is now the release update framework. Local and ad-hoc packages keep the
-menu item disabled unless the package step injects both `SUFeedURL` and
-`SUPublicEDKey`; this prevents a developer build from pointing at production
-updates by accident. Ad-hoc packages also add `disable-library-validation` to
-the local app signature so macOS can load the embedded Sparkle framework without
-a Developer ID team identifier. Developer ID release packages use the normal
-app entitlements and keep library validation enabled. A release package that
-sets `AGENTD_SPARKLE_DOWNLOAD_URL` must also be notarized and must produce a
-signed appcast.
+Sparkle is now the release update framework. The bundled `support/Info.plist`
+points new packages at the signed GitHub release appcast by default, enables
+automatic checks, and requires signed update metadata. Ad-hoc packages still add
+`disable-library-validation` to the local app signature so macOS can load the
+embedded Sparkle framework without a Developer ID team identifier. Developer ID
+release packages use the normal app entitlements and keep library validation
+enabled. A release package that sets `AGENTD_SPARKLE_DOWNLOAD_URL` must also be
+notarized and must produce a signed appcast.
 
-Sparkle release configuration is injected at package time:
+Sparkle release configuration can be overridden at package time:
 
-- `AGENTD_SPARKLE_FEED_URL`: hosted appcast URL embedded as `SUFeedURL`.
+- `AGENTD_SPARKLE_FEED_URL`: hosted appcast URL embedded as `SUFeedURL`; when
+  omitted, packages use
+  `https://github.com/evalops/agentd/releases/latest/download/appcast.xml`.
 - `AGENTD_SPARKLE_PUBLIC_ED_KEY`: base64 public EdDSA key embedded as
-  `SUPublicEDKey`.
+  `SUPublicEDKey`; when omitted, packages use the committed release-channel
+  public key.
 - `AGENTD_SPARKLE_DOWNLOAD_URL`: hosted HTTPS URL for the final `agentd.zip`;
   when set, `scripts/package_app.sh` writes and verifies `dist/appcast.xml`.
 - `AGENTD_SPARKLE_ED_KEY_FILE`: path to an exported Sparkle private EdDSA key
