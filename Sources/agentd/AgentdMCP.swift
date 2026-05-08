@@ -110,16 +110,10 @@ struct SystemAgentdMCPRuntime: AgentdMCPRuntime {
     let permissions = await MainActor.run {
       PermissionSnapshot.current(promptForAccessibility: false)
     }
-    let submitter = try Submitter(
-      endpoint: config.endpoint,
-      localOnly: true,
-      authMode: .none,
-      maxBatchBytes: config.maxBatchBytes,
-      maxBatchAgeDays: config.maxBatchAgeDays,
-      deviceId: config.deviceId,
-      encryptLocalBatches: config.encryptLocalBatches
+    let batchStats = LocalBatchStats.collect(
+      in: FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".evalops/agentd/batches")
     )
-    let batchStats = await submitter.localBatchStats()
 
     return AgentdMCPDeviceSnapshot(
       generatedAt: Date(),

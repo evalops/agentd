@@ -945,6 +945,21 @@ final class SubmitterTests: XCTestCase {
       FileManager.default.fileExists(atPath: dir.appendingPathComponent("new.json").path))
   }
 
+  func testLocalBatchStatsCollectsJSONAndEncryptedFilesWithoutKeychain() throws {
+    let dir = try makeTemporaryDirectory()
+    try writeBatchFile(dir.appendingPathComponent("plain.json"), bytes: 10, modified: Date())
+    try writeBatchFile(
+      dir.appendingPathComponent("encrypted.\(LocalBatchCryptor.encryptedExtension)"),
+      bytes: 20,
+      modified: Date()
+    )
+    try writeBatchFile(dir.appendingPathComponent("ignore.txt"), bytes: 30, modified: Date())
+
+    let stats = LocalBatchStats.collect(in: dir)
+
+    XCTAssertEqual(stats, LocalBatchStats(fileCount: 2, bytes: 30))
+  }
+
   func testLocalBatchSweepRemovesOldestFilesOverByteBudget() async throws {
     let dir = try makeTemporaryDirectory()
     try writeBatchFile(
