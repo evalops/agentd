@@ -46,6 +46,7 @@ applications_dir="${AGENTD_APPLICATIONS_DIR:-/Applications}"
 installed_app_path="$applications_dir/EvalOps agentd.app"
 app_path="$source_app_path"
 report_path="${AGENTD_SMOKE_REPORT:-"$root/dist/permission-smoke-report.md"}"
+evidence_json_path="${AGENTD_SMOKE_EVIDENCE_JSON:-"$root/dist/permission-smoke-evidence.json"}"
 batch_dir="${AGENTD_BATCH_DIR:-"$HOME/.evalops/agentd/batches"}"
 
 if [[ ! -d "$source_app_path" && -n "${AGENTD_APP_PATH:-}" ]]; then
@@ -151,6 +152,53 @@ Add concise pass/fail notes here before closing evalops/agentd#25.
 REPORT
 
 echo "Wrote $report_path"
+
+SMOKE_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+SMOKE_MACOS_VERSION="$macos_version" \
+SMOKE_MACOS_BUILD="$build_version" \
+SMOKE_APP_PATH="$app_path" \
+SMOKE_SOURCE_APP_PATH="$source_app_path" \
+SMOKE_APP_SHA="$app_sha" \
+SMOKE_ZIP_SHA="${zip_sha:-}" \
+SMOKE_CODESIGN_AUTHORITIES="${codesign_summary:-ad-hoc}" \
+SMOKE_CODESIGN_SIGNATURE="${codesign_signature:-unknown}" \
+SMOKE_CODESIGN_CDHASH="${codesign_cdhash:-unknown}" \
+SMOKE_CODESIGN_REQUIREMENT="${codesign_requirement:-unknown}" \
+SMOKE_BATCH_DIR="$batch_dir" \
+SMOKE_INSTALL_APPLICATIONS="$install_applications" \
+SMOKE_LAUNCH="$launch" \
+python3 - "$evidence_json_path" <<'PY'
+import json
+import os
+import sys
+
+payload = {
+    "date": os.environ["SMOKE_DATE"],
+    "macOS": {
+        "version": os.environ["SMOKE_MACOS_VERSION"],
+        "build": os.environ["SMOKE_MACOS_BUILD"],
+    },
+    "app": {
+        "path": os.environ["SMOKE_APP_PATH"],
+        "sourcePath": os.environ["SMOKE_SOURCE_APP_PATH"],
+        "sha256": os.environ["SMOKE_APP_SHA"],
+        "zipSha256": os.environ["SMOKE_ZIP_SHA"],
+    },
+    "codesign": {
+        "authorities": os.environ["SMOKE_CODESIGN_AUTHORITIES"],
+        "signature": os.environ["SMOKE_CODESIGN_SIGNATURE"],
+        "cdhash": os.environ["SMOKE_CODESIGN_CDHASH"],
+        "requirement": os.environ["SMOKE_CODESIGN_REQUIREMENT"],
+    },
+    "batchDirectory": os.environ["SMOKE_BATCH_DIR"],
+    "installedToApplications": os.environ["SMOKE_INSTALL_APPLICATIONS"] != "0",
+    "launched": os.environ["SMOKE_LAUNCH"] == "1",
+}
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump(payload, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+echo "Wrote $evidence_json_path"
 
 if [[ "$launch" == "1" ]]; then
   open "$app_path"

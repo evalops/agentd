@@ -216,8 +216,9 @@ enclosure URL before downloading the update.
 
 `scripts/permission_smoke.sh` packages the app when needed, installs the tested
 bundle to `/Applications/EvalOps agentd.app` by default, records macOS
-version/checksum/codesign evidence in `dist/permission-smoke-report.md`, and
-opens the installed app unless `--no-launch` is supplied. Use it for the
+version/checksum/codesign evidence in `dist/permission-smoke-report.md` and
+`dist/permission-smoke-evidence.json`, and opens the installed app unless
+`--no-launch` is supplied. Use it for the
 hardware-backed Screen Recording and Accessibility permission smoke. Set
 `AGENTD_APPLICATIONS_DIR` for tests or `AGENTD_INSTALL_APPLICATIONS=0` to skip
 the install.
@@ -383,11 +384,14 @@ encrypted `.agentdbatch` files remain unreadable without the configured local
 batch key, and raw OCR is not copied into the summary layer.
 
 For local agent context, run `agentd mcp` as a stdio MCP server. It exposes
-three local tools: `agentd_device_snapshot` for redacted device/permission and
-privacy-policy status, `agentd_activity_recent` for sanitized recent activity
-from JSON batches, and `agentd_collect_diagnostics` for writing the same
-Chronicle-style activity artifacts to a caller-provided local directory. The
-MCP surface never returns raw frames or encrypted fallback batches.
+four local tools: `agentd_device_snapshot` for redacted device/permission and
+privacy-policy status, `agentd_work_context` for a bounded, freshness-stamped
+agent navigation surface across recent apps, windows, active PRs, drop reasons,
+and verification guidance, `agentd_activity_recent` for sanitized recent
+activity from JSON batches, and `agentd_collect_diagnostics` for writing the
+same Chronicle-style activity artifacts to a caller-provided local directory.
+The MCP surface never returns raw frames, raw OCR text, or encrypted fallback
+batches.
 
 Run `agentd mcp config --command /path/to/agentd` to print a Claude/Codex-style
 client config snippet:
@@ -407,6 +411,11 @@ client config snippet:
 Broker harness. CI validates the golden fixtures in `Tests/Fixtures/chronicle`
 so request-shape drift is explicit until generated `chronicle.v1` Swift types
 are available.
+
+`scripts/mcp_smoke.py` is the black-box MCP smoke gate. It exercises stdio
+JSON-RPC initialization, tool discovery, error shapes, redacted device snapshot,
+bounded work context, activity summaries, diagnostics artifact writing, and a
+packaged app binary path in CI.
 
 ## What's next
 
