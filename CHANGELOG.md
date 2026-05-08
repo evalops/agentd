@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/evalops/agentd/compare/v0.2.0...v0.3.0) (2026-05-08)
+
+
+### Features
+
+* add local MCP context tools ([e176633](https://github.com/evalops/agentd/commit/e17663302494091727d4c2de8a299d0614bae66a))
+* print MCP client config ([ce1bec9](https://github.com/evalops/agentd/commit/ce1bec915c6a6069691158c0c7eba6aa5acf000d))
+
+
+### Bug Fixes
+
+* avoid keychain in MCP device snapshot ([#123](https://github.com/evalops/agentd/issues/123)) ([ea5342b](https://github.com/evalops/agentd/commit/ea5342bf5d829e40513a307b6905097923be6c91))
+
 ## [0.2.0](https://github.com/evalops/agentd/compare/v0.1.0...v0.2.0) (2026-05-06)
 
 
