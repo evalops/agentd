@@ -14,7 +14,218 @@ final class DiagnosticCLITests: XCTestCase {
     XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "capture-worker-stream"]))
     XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "selftest"]))
     XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "activity"]))
+    XCTAssertTrue(DiagnosticCLI.shouldHandle(["agentd", "mcp"]))
     XCTAssertFalse(DiagnosticCLI.shouldHandle(["agentd", "--local-only"]))
+  }
+
+  func testMcpInitializeAndToolsListExposeLocalContextTools() async throws {
+    let runtime = AgentdMCPRuntimeStub()
+    let server = AgentdMCPServer(runtime: runtime)
+
+    let initialize = try await server.handle(
+      jsonData(
+        [
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "initialize",
+          "params": [
+            "protocolVersion": "2025-06-18",
+            "capabilities": [:],
+            "clientInfo": ["name": "codex-test", "version": "dev"],
+          ],
+        ]))
+    let initializeRoot = try jsonObject(initialize)
+
+    XCTAssertEqual(initializeRoot["jsonrpc"] as? String, "2.0")
+    XCTAssertEqual(initializeRoot["id"] as? Int, 1)
+    let initializeResult = try XCTUnwrap(initializeRoot["result"] as? [String: Any])
+    XCTAssertEqual(initializeResult["protocolVersion"] as? String, "2025-06-18")
+
+    let tools = try await server.handle(
+      jsonData(["jsonrpc": "2.0", "id": "tools", "method": "tools/list"]))
+    let toolsRoot = try jsonObject(tools)
+    let toolsResult = try XCTUnwrap(toolsRoot["result"] as? [String: Any])
+    let toolList = try XCTUnwrap(toolsResult["tools"] as? [[String: Any]])
+    let names = Set(toolList.compactMap { $0["name"] as? String })
+
+    XCTAssertEqual(
+      names,
+      ["agentd_device_snapshot", "agentd_activity_recent", "agentd_collect_diagnostics"]
+    )
+    let annotationsByName = Dictionary(
+      uniqueKeysWithValues: try toolList.map { tool in
+        (
+          try XCTUnwrap(tool["name"] as? String),
+          try XCTUnwrap(tool["annotations"] as? [String: Any])
+        )
+      }
+    )
+    XCTAssertEqual(annotationsByName["agentd_device_snapshot"]?["readOnlyHint"] as? Bool, true)
+    XCTAssertEqual(annotationsByName["agentd_activity_recent"]?["readOnlyHint"] as? Bool, true)
+    XCTAssertEqual(annotationsByName["agentd_collect_diagnostics"]?["readOnlyHint"] as? Bool, false)
+  }
+
+  func testMcpResponsesAreSingleLineJSONRPCMessages() async throws {
+    let server = AgentdMCPServer(runtime: AgentdMCPRuntimeStub())
+
+    let response = try await server.handle(
+      jsonData(["jsonrpc": "2.0", "id": "tools", "method": "tools/list"]))
+
+    XCTAssertEqual(response.filter { $0 == 0x0A }.count, 1)
+    XCTAssertEqual(response.last, 0x0A)
+  }
+
+  func testMcpErrorsReturnJSONRPCResponses() async throws {
+    let server = AgentdMCPServer(runtime: AgentdMCPRuntimeStub())
+
+    let invalidParams = try await server.handle(
+      jsonData([
+        "jsonrpc": "2.0",
+        "id": "bad-window",
+        "method": "tools/call",
+        "params": [
+          "name": "agentd_activity_recent",
+          "arguments": ["window": "bad"],
+        ],
+      ]))
+    let invalidParamsRoot = try jsonObject(invalidParams)
+    let invalidParamsError = try XCTUnwrap(invalidParamsRoot["error"] as? [String: Any])
+    XCTAssertEqual(invalidParamsRoot["id"] as? String, "bad-window")
+    XCTAssertEqual(invalidParamsError["code"] as? Int, -32602)
+
+    let parseError = try await server.handle(Data("{".utf8))
+    let parseErrorRoot = try jsonObject(parseError)
+    let parseErrorBody = try XCTUnwrap(parseErrorRoot["error"] as? [String: Any])
+    XCTAssertTrue(parseErrorRoot["id"] is NSNull)
+    XCTAssertEqual(parseErrorBody["code"] as? Int, -32700)
+  }
+
+  func testMcpActivityRecentReturnsRedactedActivitySummary() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let runtime = AgentdMCPRuntimeStub()
+    runtime.activitySummary = ActivitySummaryTests.summary(
+      batchDirectory: root,
+      windows: [
+        ActivityWindowSummary(
+          appName: "Google Chrome",
+          bundleId: "com.google.Chrome",
+          windowTitle: "Review EvalOps",
+          documentPath: "https://github.com/evalops/platform/pull/123?code=REDACTED&safe=1",
+          frameCount: 3,
+          firstSeenAt: Date(timeIntervalSince1970: 100),
+          lastSeenAt: Date(timeIntervalSince1970: 120)
+        )
+      ]
+    )
+    let server = AgentdMCPServer(runtime: runtime)
+
+    let response = try await server.handle(
+      jsonData([
+        "jsonrpc": "2.0",
+        "id": "activity",
+        "method": "tools/call",
+        "params": [
+          "name": "agentd_activity_recent",
+          "arguments": ["window": "6h", "batch_dir": root.path],
+        ],
+      ]))
+    let text = try mcpText(response)
+    let decoded = try jsonObject(Data(text.utf8))
+
+    XCTAssertEqual(decoded["windowLabel"] as? String, "6h")
+    XCTAssertEqual(decoded["batchDirectory"] as? String, root.path)
+    let windows = try XCTUnwrap(decoded["windows"] as? [[String: Any]])
+    XCTAssertEqual(
+      windows.first?["documentPath"] as? String,
+      "https://github.com/evalops/platform/pull/123?code=REDACTED&safe=1"
+    )
+    XCTAssertEqual(runtime.requestedActivity?.windowLabel, "6h")
+    XCTAssertEqual(runtime.requestedActivity?.batchDirectory.path, root.path)
+  }
+
+  func testMcpCollectDiagnosticsWritesActivityArtifactsAndReturnsPaths() async throws {
+    let root = try temporaryDirectory()
+    let out = try temporaryDirectory()
+    defer {
+      try? FileManager.default.removeItem(at: root)
+      try? FileManager.default.removeItem(at: out)
+    }
+    let runtime = AgentdMCPRuntimeStub()
+    runtime.diagnosticsResult = AgentdMCPDiagnosticsResult(
+      instructionsPath: out.appendingPathComponent("instructions.md").path,
+      resourcePaths: [out.appendingPathComponent("resources/activity-24h.md").path]
+    )
+    let server = AgentdMCPServer(runtime: runtime)
+
+    let response = try await server.handle(
+      jsonData([
+        "jsonrpc": "2.0",
+        "id": "diag",
+        "method": "tools/call",
+        "params": [
+          "name": "agentd_collect_diagnostics",
+          "arguments": ["batch_dir": root.path, "out_dir": out.path, "window": "24h"],
+        ],
+      ]))
+    let decoded = try jsonObject(Data(try mcpText(response).utf8))
+
+    XCTAssertEqual(
+      decoded["instructionsPath"] as? String,
+      out.appendingPathComponent("instructions.md").path
+    )
+    XCTAssertEqual(
+      decoded["resourcePaths"] as? [String],
+      [out.appendingPathComponent("resources/activity-24h.md").path]
+    )
+    XCTAssertEqual(runtime.requestedDiagnostics?.batchDirectory.path, root.path)
+    XCTAssertEqual(runtime.requestedDiagnosticsOutDir?.path, out.path)
+  }
+
+  func testMcpDeviceSnapshotReportsRedactedLocalStatus() async throws {
+    let runtime = AgentdMCPRuntimeStub()
+    runtime.deviceSnapshot = AgentdMCPDeviceSnapshot(
+      generatedAt: Date(timeIntervalSince1970: 0),
+      appVersion: "0.2.0",
+      deviceId: "device_1",
+      organizationId: "evalops",
+      mode: "managed",
+      endpoint: "https://chronicle.evalops.dev/chronicle.v1.ChronicleService/SubmitBatch",
+      permissions: AgentdMCPPermissionStatus(
+        accessibilityTrusted: true,
+        screenCaptureTrusted: false,
+        menuSummary: "Needs Screen Recording"
+      ),
+      localBatchStats: AgentdMCPLocalBatchStats(fileCount: 2, bytes: 42),
+      privacy: AgentdMCPPrivacyStatus(
+        allowedBundleCount: 3,
+        deniedBundleCount: 1,
+        deniedPathPrefixCount: 2,
+        pauseTitlePatternCount: 4,
+        captureAllDisplays: true,
+        selectedDisplayIds: []
+      )
+    )
+    let server = AgentdMCPServer(runtime: runtime)
+
+    let response = try await server.handle(
+      jsonData([
+        "jsonrpc": "2.0",
+        "id": "snapshot",
+        "method": "tools/call",
+        "params": [
+          "name": "agentd_device_snapshot",
+          "arguments": [:],
+        ],
+      ]))
+    let decoded = try jsonObject(Data(try mcpText(response).utf8))
+
+    XCTAssertEqual(decoded["deviceId"] as? String, "device_1")
+    XCTAssertEqual(decoded["mode"] as? String, "managed")
+    XCTAssertEqual(decoded["endpoint"] as? String, runtime.deviceSnapshot.endpoint)
+    XCTAssertFalse((decoded["endpoint"] as? String ?? "").contains("?"))
+    let privacy = try XCTUnwrap(decoded["privacy"] as? [String: Any])
+    XCTAssertEqual(privacy["deniedPathPrefixCount"] as? Int, 2)
   }
 
   func testCaptureOnceParserAcceptsSafeFlags() throws {

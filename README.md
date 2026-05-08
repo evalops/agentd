@@ -382,6 +382,13 @@ summary to stdout; `--write-summaries ~/.evalops/agentd/activity` writes an
 encrypted `.agentdbatch` files remain unreadable without the configured local
 batch key, and raw OCR is not copied into the summary layer.
 
+For local agent context, run `agentd mcp` as a stdio MCP server. It exposes
+three local tools: `agentd_device_snapshot` for redacted device/permission and
+privacy-policy status, `agentd_activity_recent` for sanitized recent activity
+from JSON batches, and `agentd_collect_diagnostics` for writing the same
+Chronicle-style activity artifacts to a caller-provided local directory. The
+MCP surface never returns raw frames or encrypted fallback batches.
+
 `scripts/mock_chronicle.py` provides a strict local mock Chronicle and Secret
 Broker harness. CI validates the golden fixtures in `Tests/Fixtures/chronicle`
 so request-shape drift is explicit until generated `chronicle.v1` Swift types
@@ -404,6 +411,7 @@ are available.
 Sources/agentd/
   main.swift              # NSApplication + AppController boot
   ChronicleControl.swift  # RegisterDevice/Heartbeat + policy response client
+  AgentdMCP.swift         # Local stdio MCP server for redacted device context
   ActivitySummary.swift   # Sanitized local activity summaries/resources
   Diagnostics.swift       # Redacted local report generation
   PauseState.swift        # Manual/scheduled/policy pause precedence

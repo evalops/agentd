@@ -109,7 +109,7 @@ enum DiagnosticProbeRunner {
 enum DiagnosticCLI {
   static let handledCommands = [
     "list-displays", "capture-once", "capture-worker-once", "capture-worker-stream", "selftest",
-    "activity", "help", "--help", "-h",
+    "activity", "mcp", "help", "--help", "-h",
   ]
 
   static func shouldHandle(_ arguments: [String]) -> Bool {
@@ -137,6 +137,8 @@ enum DiagnosticCLI {
       case .selftest:
         let payload = await SelftestDiagnostics.run()
         try writeJSON(payload, to: nil)
+      case .mcp:
+        return await AgentdMCPStdio.run()
       case .activity(let options):
         let payload = try await ActivitySummary.run(options: options)
         if let summaryRoot = options.summaryRoot {
@@ -199,12 +201,14 @@ enum DiagnosticCLI {
       agentd list-displays
       agentd capture-once [--display-id ID] [--no-ocr] [--out PATH]
       agentd activity [--since HOURS] [--window 10m|6h|24h] [--format json|markdown] [--batch-dir PATH] [--write-summaries PATH]
+      agentd mcp
       agentd selftest
 
     Diagnostic commands emit redacted JSON and never start the menu-bar app.
     capture-once uses the normal privacy filters, SecretScrubber, and OCR pipeline.
     activity summarizes locally persisted JSON batches without reading encrypted batch files.
     --write-summaries writes Chronicle-style instructions.md and resources/*.md locally.
+    mcp starts a local JSON-RPC stdio MCP server with redacted device/context tools.
 
     """
 }
@@ -217,6 +221,7 @@ enum DiagnosticCommand: Equatable {
   case captureWorkerStream(CaptureStreamOptions)
   case selftest
   case activity(ActivityOptions)
+  case mcp
 
   static func parse(_ arguments: [String]) throws -> DiagnosticCommand {
     guard let command = arguments.first else { return .help }
@@ -236,6 +241,9 @@ enum DiagnosticCommand: Equatable {
     case "selftest":
       guard tail.isEmpty else { throw DiagnosticCLIError.usage("selftest takes no flags") }
       return .selftest
+    case "mcp":
+      guard tail.isEmpty else { throw DiagnosticCLIError.usage("mcp takes no flags") }
+      return .mcp
     case "activity":
       return .activity(try ActivityOptions.parse(tail))
     default:
