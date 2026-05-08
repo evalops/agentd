@@ -79,7 +79,7 @@ struct SystemAgentdMCPRuntime: AgentdMCPRuntime {
       deviceId: config.deviceId,
       organizationId: config.organizationId,
       mode: config.localOnly ? "local-only" : "managed",
-      endpoint: Self.redactEndpoint(config.endpoint),
+      endpoint: EndpointRedaction.redact(config.endpoint),
       permissions: AgentdMCPPermissionStatus(
         accessibilityTrusted: permissions.accessibilityTrusted,
         screenCaptureTrusted: permissions.screenCaptureTrusted,
@@ -112,13 +112,6 @@ struct SystemAgentdMCPRuntime: AgentdMCPRuntime {
     )
   }
 
-  private static func redactEndpoint(_ endpoint: URL) -> String {
-    var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
-    components?.query = nil
-    components?.user = nil
-    components?.password = nil
-    return components?.url?.absoluteString ?? "[redacted]"
-  }
 }
 
 struct AgentdMCPServer {
@@ -128,8 +121,24 @@ struct AgentdMCPServer {
     self.runtime = runtime
   }
 
-  func handle(_ data: Data) async throws -> Data {
-    let request = try AgentdMCPRequest(data: data)
+  func handle(_ data: Data) async -> Data {
+    do {
+      let request = try AgentdMCPRequest(data: data)
+      do {
+        return try await handleRequest(request)
+      } catch {
+        let mcpError = Self.jsonRPCError(for: error)
+        return safeErrorResponse(id: request.id, code: mcpError.code, message: mcpError.message)
+      }
+    } catch let error as AgentdMCPError {
+      let mcpError = Self.jsonRPCError(for: error)
+      return safeErrorResponse(id: nil, code: mcpError.code, message: mcpError.message)
+    } catch {
+      return safeErrorResponse(id: nil, code: -32700, message: "parse error")
+    }
+  }
+
+  private func handleRequest(_ request: AgentdMCPRequest) async throws -> Data {
     switch request.method {
     case "initialize":
       return try response(
@@ -230,6 +239,12 @@ struct AgentdMCPServer {
     ])
   }
 
+  private func safeErrorResponse(id: Any?, code: Int, message: String) -> Data {
+    (try? errorResponse(id: id, code: code, message: message))
+      ?? (Data(#"{"error":{"code":-32603,"message":"internal error"},"id":null,"jsonrpc":"2.0"}"#.utf8)
+        + Data([0x0A]))
+  }
+
   private static func toolCatalog() -> [[String: Any]] {
     [
       [
@@ -285,6 +300,17 @@ struct AgentdMCPServer {
     try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
       + Data([0x0A])
   }
+
+  private static func jsonRPCError(for error: Error) -> (code: Int, message: String) {
+    switch error {
+    case let error as AgentdMCPError:
+      return (error.code, error.localizedDescription)
+    case let error as DiagnosticCLIError:
+      return (-32602, error.localizedDescription)
+    default:
+      return (-32603, error.localizedDescription)
+    }
+  }
 }
 
 struct AgentdMCPRequest {
@@ -308,6 +334,13 @@ struct AgentdMCPRequest {
 enum AgentdMCPError: Error, LocalizedError {
   case invalidRequest
 
+  var code: Int {
+    switch self {
+    case .invalidRequest:
+      return -32600
+    }
+  }
+
   var errorDescription: String? {
     switch self {
     case .invalidRequest:
@@ -321,13 +354,9 @@ enum AgentdMCPStdio {
     while let line = readLine(strippingNewline: true) {
       let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !trimmed.isEmpty else { continue }
-      do {
-        let response = try await server.handle(Data(trimmed.utf8))
-        if !response.isEmpty {
-          FileHandle.standardOutput.write(response)
-        }
-      } catch {
-        FileHandle.standardError.write(Data("agentd mcp: \(error.localizedDescription)\n".utf8))
+      let response = await server.handle(Data(trimmed.utf8))
+      if !response.isEmpty {
+        FileHandle.standardOutput.write(response)
       }
     }
     return 0

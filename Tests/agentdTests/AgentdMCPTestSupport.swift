@@ -33,15 +33,24 @@ final class AgentdMCPRuntimeStub: AgentdMCPRuntime {
     instructionsPath: "/tmp/instructions.md",
     resourcePaths: ["/tmp/resources/activity.md"]
   )
+  var deviceSnapshotError: Error?
+  var activityError: Error?
+  var diagnosticsError: Error?
   private(set) var requestedActivity: ActivityOptions?
   private(set) var requestedDiagnostics: ActivityOptions?
   private(set) var requestedDiagnosticsOutDir: URL?
 
   func deviceSnapshot() async throws -> AgentdMCPDeviceSnapshot {
+    if let deviceSnapshotError {
+      throw deviceSnapshotError
+    }
     deviceSnapshot
   }
 
   func activityRecent(options: ActivityOptions) async throws -> ActivitySummary {
+    if let activityError {
+      throw activityError
+    }
     requestedActivity = options
     return activitySummary.replacing(
       batchDirectory: options.batchDirectory.path,
@@ -52,6 +61,9 @@ final class AgentdMCPRuntimeStub: AgentdMCPRuntime {
   func collectDiagnostics(options: ActivityOptions, outputDirectory: URL) async throws
     -> AgentdMCPDiagnosticsResult
   {
+    if let diagnosticsError {
+      throw diagnosticsError
+    }
     requestedDiagnostics = options
     requestedDiagnosticsOutDir = outputDirectory
     return diagnosticsResult
@@ -72,6 +84,12 @@ func mcpText(_ data: Data) throws -> String {
   let result = try XCTUnwrap(root["result"] as? [String: Any])
   let content = try XCTUnwrap(result["content"] as? [[String: Any]])
   return try XCTUnwrap(content.first?["text"] as? String)
+}
+
+struct AgentdMCPStubError: LocalizedError {
+  let message: String
+
+  var errorDescription: String? { message }
 }
 
 extension ActivitySummaryTests {

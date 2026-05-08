@@ -34,7 +34,7 @@ enum DiagnosticsReport {
     lines.append("- Screen capture preflight: \(snapshot.permissions.screenCaptureTrusted)")
     lines.append("- Mode: \(snapshot.config.localOnly ? "local-only" : "managed")")
     lines.append("- Secret Broker: \(snapshot.config.secretBroker == nil ? "disabled" : "enabled")")
-    lines.append("- Endpoint: \(redactEndpoint(snapshot.config.endpoint))")
+    lines.append("- Endpoint: \(EndpointRedaction.redact(snapshot.config.endpoint))")
     lines.append("- Policy version: \(snapshot.policyVersion ?? "none")")
     lines.append("- Policy source: \(redact(snapshot.policySource ?? "none"))")
     lines.append("- Last control error: \(redact(snapshot.controlError ?? "none"))")
@@ -183,14 +183,6 @@ enum DiagnosticsReport {
       return value.replacingOccurrences(of: NSHomeDirectory(), with: "~")
     }
     return redact(value)
-  }
-
-  private static func redactEndpoint(_ endpoint: URL) -> String {
-    var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
-    components?.query = nil
-    components?.user = nil
-    components?.password = nil
-    return components?.url?.absoluteString ?? "[redacted]"
   }
 
   private static func iso(_ date: Date) -> String {

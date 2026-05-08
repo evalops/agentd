@@ -22,8 +22,8 @@ final class DiagnosticCLITests: XCTestCase {
     let runtime = AgentdMCPRuntimeStub()
     let server = AgentdMCPServer(runtime: runtime)
 
-    let initialize = try await server.handle(
-      jsonData(
+    let initialize = await server.handle(
+      try jsonData(
         [
           "jsonrpc": "2.0",
           "id": 1,
@@ -41,8 +41,8 @@ final class DiagnosticCLITests: XCTestCase {
     let initializeResult = try XCTUnwrap(initializeRoot["result"] as? [String: Any])
     XCTAssertEqual(initializeResult["protocolVersion"] as? String, "2025-06-18")
 
-    let tools = try await server.handle(
-      jsonData(["jsonrpc": "2.0", "id": "tools", "method": "tools/list"]))
+    let tools = await server.handle(
+      try jsonData(["jsonrpc": "2.0", "id": "tools", "method": "tools/list"]))
     let toolsRoot = try jsonObject(tools)
     let toolsResult = try XCTUnwrap(toolsRoot["result"] as? [String: Any])
     let toolList = try XCTUnwrap(toolsResult["tools"] as? [[String: Any]])
@@ -85,8 +85,8 @@ final class DiagnosticCLITests: XCTestCase {
     )
     let server = AgentdMCPServer(runtime: runtime)
 
-    let response = try await server.handle(
-      jsonData([
+    let response = await server.handle(
+      try jsonData([
         "jsonrpc": "2.0",
         "id": "activity",
         "method": "tools/call",
@@ -123,8 +123,8 @@ final class DiagnosticCLITests: XCTestCase {
     )
     let server = AgentdMCPServer(runtime: runtime)
 
-    let response = try await server.handle(
-      jsonData([
+    let response = await server.handle(
+      try jsonData([
         "jsonrpc": "2.0",
         "id": "diag",
         "method": "tools/call",
@@ -173,8 +173,8 @@ final class DiagnosticCLITests: XCTestCase {
     )
     let server = AgentdMCPServer(runtime: runtime)
 
-    let response = try await server.handle(
-      jsonData([
+    let response = await server.handle(
+      try jsonData([
         "jsonrpc": "2.0",
         "id": "snapshot",
         "method": "tools/call",
@@ -191,6 +191,65 @@ final class DiagnosticCLITests: XCTestCase {
     XCTAssertFalse((decoded["endpoint"] as? String ?? "").contains("?"))
     let privacy = try XCTUnwrap(decoded["privacy"] as? [String: Any])
     XCTAssertEqual(privacy["deniedPathPrefixCount"] as? Int, 2)
+  }
+
+  func testMcpInvalidRequestsReturnJsonRpcErrorResponses() async throws {
+    let server = AgentdMCPServer(runtime: AgentdMCPRuntimeStub())
+
+    let missingMethod = await server.handle(
+      try jsonData(["jsonrpc": "2.0", "id": 1, "params": [:]])
+    )
+    let invalidRoot = try jsonObject(missingMethod)
+    let invalidError = try XCTUnwrap(invalidRoot["error"] as? [String: Any])
+    XCTAssertTrue(invalidRoot["id"] is NSNull)
+    XCTAssertEqual(invalidError["code"] as? Int, -32600)
+    XCTAssertEqual(invalidError["message"] as? String, "invalid MCP JSON-RPC request")
+
+    let malformed = await server.handle(Data("{".utf8))
+    let malformedRoot = try jsonObject(malformed)
+    let malformedError = try XCTUnwrap(malformedRoot["error"] as? [String: Any])
+    XCTAssertTrue(malformedRoot["id"] is NSNull)
+    XCTAssertEqual(malformedError["code"] as? Int, -32700)
+    XCTAssertEqual(malformedError["message"] as? String, "parse error")
+  }
+
+  func testMcpThrownToolErrorsReturnJsonRpcErrorResponses() async throws {
+    let runtime = AgentdMCPRuntimeStub()
+    runtime.deviceSnapshotError = AgentdMCPStubError(message: "snapshot failed")
+    runtime.activityError = DiagnosticCLIError.usage("--window requires one of 10m, 6h, or 24h")
+    let server = AgentdMCPServer(runtime: runtime)
+
+    let snapshotResponse = await server.handle(
+      try jsonData([
+        "jsonrpc": "2.0",
+        "id": "snapshot-error",
+        "method": "tools/call",
+        "params": [
+          "name": "agentd_device_snapshot",
+          "arguments": [:],
+        ],
+      ]))
+    let snapshotRoot = try jsonObject(snapshotResponse)
+    let snapshotError = try XCTUnwrap(snapshotRoot["error"] as? [String: Any])
+    XCTAssertEqual(snapshotRoot["id"] as? String, "snapshot-error")
+    XCTAssertEqual(snapshotError["code"] as? Int, -32603)
+    XCTAssertEqual(snapshotError["message"] as? String, "snapshot failed")
+
+    let activityResponse = await server.handle(
+      try jsonData([
+        "jsonrpc": "2.0",
+        "id": "activity-error",
+        "method": "tools/call",
+        "params": [
+          "name": "agentd_activity_recent",
+          "arguments": ["window": "6h"],
+        ],
+      ]))
+    let activityRoot = try jsonObject(activityResponse)
+    let activityError = try XCTUnwrap(activityRoot["error"] as? [String: Any])
+    XCTAssertEqual(activityRoot["id"] as? String, "activity-error")
+    XCTAssertEqual(activityError["code"] as? Int, -32602)
+    XCTAssertEqual(activityError["message"] as? String, "--window requires one of 10m, 6h, or 24h")
   }
 
   func testCaptureOnceParserAcceptsSafeFlags() throws {
