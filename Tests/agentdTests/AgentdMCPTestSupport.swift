@@ -34,6 +34,7 @@ final class AgentdMCPRuntimeStub: AgentdMCPRuntime {
     resourcePaths: ["/tmp/resources/activity.md"]
   )
   private(set) var requestedActivity: ActivityOptions?
+  private(set) var requestedWorkContext: ActivityOptions?
   private(set) var requestedDiagnostics: ActivityOptions?
   private(set) var requestedDiagnosticsOutDir: URL?
 
@@ -46,6 +47,18 @@ final class AgentdMCPRuntimeStub: AgentdMCPRuntime {
     return activitySummary.replacing(
       batchDirectory: options.batchDirectory.path,
       windowLabel: options.windowLabel
+    )
+  }
+
+  func workContext(options: ActivityOptions) async throws -> AgentdMCPWorkContext {
+    requestedWorkContext = options
+    return AgentdMCPWorkContext.make(
+      device: deviceSnapshot,
+      activity: activitySummary.replacing(
+        batchDirectory: options.batchDirectory.path,
+        windowLabel: options.windowLabel
+      ),
+      now: Date(timeIntervalSince1970: 1_200)
     )
   }
 

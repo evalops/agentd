@@ -49,6 +49,9 @@ jobs:
       - name: Validate Sparkle appcast tooling
         run: python3 scripts/sparkle_appcast.py self-test
 
+      - name: Smoke test local MCP server
+        run: python3 scripts/mcp_smoke.py
+
       - name: Validate release metadata
         run: python3 scripts/validate_release_metadata.py
 
@@ -63,3 +66,8 @@ jobs:
 
       - name: Package hardened app bundle
         run: scripts/package_app.sh
+
+      - name: Smoke test packaged MCP server
+        run: >
+          python3 scripts/mcp_smoke.py
+          --packaged-binary "dist/EvalOps agentd.app/Contents/MacOS/agentd"

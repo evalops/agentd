@@ -50,7 +50,10 @@ final class DiagnosticCLITests: XCTestCase {
 
     XCTAssertEqual(
       names,
-      ["agentd_device_snapshot", "agentd_activity_recent", "agentd_collect_diagnostics"]
+      [
+        "agentd_device_snapshot", "agentd_work_context", "agentd_activity_recent",
+        "agentd_collect_diagnostics",
+      ]
     )
     let annotationsByName = Dictionary(
       uniqueKeysWithValues: try toolList.map { tool in
@@ -61,6 +64,7 @@ final class DiagnosticCLITests: XCTestCase {
       }
     )
     XCTAssertEqual(annotationsByName["agentd_device_snapshot"]?["readOnlyHint"] as? Bool, true)
+    XCTAssertEqual(annotationsByName["agentd_work_context"]?["readOnlyHint"] as? Bool, true)
     XCTAssertEqual(annotationsByName["agentd_activity_recent"]?["readOnlyHint"] as? Bool, true)
     XCTAssertEqual(annotationsByName["agentd_collect_diagnostics"]?["readOnlyHint"] as? Bool, false)
   }
@@ -170,6 +174,106 @@ final class DiagnosticCLITests: XCTestCase {
     )
     XCTAssertEqual(runtime.requestedActivity?.windowLabel, "6h")
     XCTAssertEqual(runtime.requestedActivity?.batchDirectory.path, root.path)
+  }
+
+  func testMcpWorkContextReturnsBoundedFreshStatusForAgents() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let runtime = AgentdMCPRuntimeStub()
+    runtime.deviceSnapshot = AgentdMCPDeviceSnapshot(
+      generatedAt: Date(timeIntervalSince1970: 1_000),
+      appVersion: "0.3.0",
+      deviceId: "device_1",
+      organizationId: "evalops",
+      mode: "managed",
+      endpoint: "https://chronicle.evalops.dev/chronicle.v1.ChronicleService/SubmitBatch",
+      permissions: AgentdMCPPermissionStatus(
+        accessibilityTrusted: true,
+        screenCaptureTrusted: false,
+        menuSummary: "Needs Screen Recording"
+      ),
+      localBatchStats: AgentdMCPLocalBatchStats(fileCount: 1, bytes: 64),
+      privacy: AgentdMCPPrivacyStatus(
+        allowedBundleCount: 3,
+        deniedBundleCount: 1,
+        deniedPathPrefixCount: 2,
+        pauseTitlePatternCount: 4,
+        captureAllDisplays: true,
+        selectedDisplayIds: []
+      )
+    )
+    runtime.activitySummary = ActivitySummary(
+      generatedAt: Date(timeIntervalSince1970: 1_000),
+      since: Date(timeIntervalSince1970: 800),
+      until: Date(timeIntervalSince1970: 1_000),
+      staleAfter: Date(timeIntervalSince1970: 1_600),
+      windowLabel: "24h",
+      batchDirectory: root.path,
+      batchCount: 2,
+      nonemptyBatchCount: 1,
+      frameCount: 3,
+      sourceBatchIds: ["batch_1"],
+      displayIds: [1, 2],
+      droppedCounts: DropCounts(secret: 1, duplicate: 2, deniedApp: 0, deniedPath: 0),
+      droppedReasonCounts: ["secret.ocrText:openai": 1],
+      apps: [
+        ActivityAppSummary(appName: "Codex", bundleId: "com.openai.codex", frameCount: 1),
+        ActivityAppSummary(appName: "Ghostty", bundleId: "com.mitchellh.ghostty", frameCount: 2),
+      ],
+      windows: [
+        ActivityWindowSummary(
+          appName: "Google Chrome",
+          bundleId: "com.google.Chrome",
+          windowTitle: "evalops/agentd#123",
+          documentPath: "https://github.com/evalops/agentd/pull/123?token=REDACTED",
+          frameCount: 3,
+          firstSeenAt: Date(timeIntervalSince1970: 900),
+          lastSeenAt: Date(timeIntervalSince1970: 1_000)
+        )
+      ],
+      artifacts: [
+        ActivityArtifactSummary(
+          label: "evalops/agentd#123",
+          url: "https://github.com/evalops/agentd/pull/123",
+          batchCount: 1,
+          firstSeenAt: Date(timeIntervalSince1970: 900),
+          lastSeenAt: Date(timeIntervalSince1970: 1_000),
+          foregroundSeconds: 60
+        )
+      ]
+    )
+    let server = AgentdMCPServer(runtime: runtime)
+
+    let response = try await server.handle(
+      jsonData([
+        "jsonrpc": "2.0",
+        "id": "work",
+        "method": "tools/call",
+        "params": [
+          "name": "agentd_work_context",
+          "arguments": ["window": "6h", "batch_dir": root.path],
+        ],
+      ]))
+    let decoded = try jsonObject(Data(try mcpText(response).utf8))
+
+    XCTAssertEqual(decoded["generatedAt"] as? String, "1970-01-01T00:20:00Z")
+    XCTAssertEqual(
+      decoded["warnings"] as? [String],
+      [
+        "screen recording permission is not trusted",
+        "queued local batches are waiting to submit",
+      ])
+    let activity = try XCTUnwrap(decoded["activity"] as? [String: Any])
+    XCTAssertEqual(activity["windowLabel"] as? String, "6h")
+    XCTAssertEqual(activity["frameCount"] as? Int, 3)
+    let topApps = try XCTUnwrap(activity["topApps"] as? [[String: Any]])
+    XCTAssertEqual(topApps.first?["appName"] as? String, "Ghostty")
+    let activeArtifacts = try XCTUnwrap(activity["activeArtifacts"] as? [[String: Any]])
+    XCTAssertEqual(activeArtifacts.first?["label"] as? String, "evalops/agentd#123")
+    let guidance = try XCTUnwrap(decoded["guidance"] as? [String])
+    XCTAssertTrue(guidance.joined(separator: " ").contains("No raw frames"))
+    XCTAssertEqual(runtime.requestedWorkContext?.windowLabel, "6h")
+    XCTAssertEqual(runtime.requestedWorkContext?.batchDirectory.path, root.path)
   }
 
   func testMcpCollectDiagnosticsWritesActivityArtifactsAndReturnsPaths() async throws {
