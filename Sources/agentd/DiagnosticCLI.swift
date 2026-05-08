@@ -139,6 +139,12 @@ enum DiagnosticCLI {
         try writeJSON(payload, to: nil)
       case .mcp:
         return await AgentdMCPStdio.run()
+      case .mcpConfig(let options):
+        let payload = AgentdMCPClientConfig(
+          command: options.command ?? executablePath(),
+          serverName: options.serverName
+        )
+        try writeJSON(payload, to: nil)
       case .activity(let options):
         let payload = try await ActivitySummary.run(options: options)
         if let summaryRoot = options.summaryRoot {
@@ -196,12 +202,19 @@ enum DiagnosticCLI {
     }
   }
 
+  private static func executablePath() -> String {
+    guard let first = CommandLine.arguments.first, !first.isEmpty else { return "agentd" }
+    guard first.contains("/") else { return first }
+    return URL(fileURLWithPath: first).standardizedFileURL.path
+  }
+
   static let help = """
     Usage:
       agentd list-displays
       agentd capture-once [--display-id ID] [--no-ocr] [--out PATH]
       agentd activity [--since HOURS] [--window 10m|6h|24h] [--format json|markdown] [--batch-dir PATH] [--write-summaries PATH]
       agentd mcp
+      agentd mcp config [--command PATH] [--server-name NAME]
       agentd selftest
 
     Diagnostic commands emit redacted JSON and never start the menu-bar app.
@@ -209,6 +222,7 @@ enum DiagnosticCLI {
     activity summarizes locally persisted JSON batches without reading encrypted batch files.
     --write-summaries writes Chronicle-style instructions.md and resources/*.md locally.
     mcp starts a local JSON-RPC stdio MCP server with redacted device/context tools.
+    mcp config prints a Claude/Codex-style MCP client config snippet for this binary.
 
     """
 }
@@ -222,6 +236,7 @@ enum DiagnosticCommand: Equatable {
   case selftest
   case activity(ActivityOptions)
   case mcp
+  case mcpConfig(AgentdMCPConfigOptions)
 
   static func parse(_ arguments: [String]) throws -> DiagnosticCommand {
     guard let command = arguments.first else { return .help }
@@ -242,8 +257,13 @@ enum DiagnosticCommand: Equatable {
       guard tail.isEmpty else { throw DiagnosticCLIError.usage("selftest takes no flags") }
       return .selftest
     case "mcp":
-      guard tail.isEmpty else { throw DiagnosticCLIError.usage("mcp takes no flags") }
-      return .mcp
+      guard let subcommand = tail.first else { return .mcp }
+      switch subcommand {
+      case "config":
+        return .mcpConfig(try AgentdMCPConfigOptions.parse(Array(tail.dropFirst())))
+      default:
+        throw DiagnosticCLIError.usage("unknown mcp subcommand '\(subcommand)'")
+      }
     case "activity":
       return .activity(try ActivityOptions.parse(tail))
     default:

@@ -389,6 +389,20 @@ from JSON batches, and `agentd_collect_diagnostics` for writing the same
 Chronicle-style activity artifacts to a caller-provided local directory. The
 MCP surface never returns raw frames or encrypted fallback batches.
 
+Run `agentd mcp config --command /path/to/agentd` to print a Claude/Codex-style
+client config snippet:
+
+```json
+{
+  "mcpServers": {
+    "agentd": {
+      "command": "/path/to/agentd",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
 `scripts/mock_chronicle.py` provides a strict local mock Chronicle and Secret
 Broker harness. CI validates the golden fixtures in `Tests/Fixtures/chronicle`
 so request-shape drift is explicit until generated `chronicle.v1` Swift types
