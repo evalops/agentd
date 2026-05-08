@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/evalops/agentd/compare/v0.3.0...v0.4.0) (2026-05-08)
+
+
+### Features
+
+* add agentd MCP work context ([#124](https://github.com/evalops/agentd/issues/124)) ([77ccd56](https://github.com/evalops/agentd/commit/77ccd56d39922ad9c37a1db1c92da75a50721fd7))
+
 ## [0.3.0](https://github.com/evalops/agentd/compare/v0.2.0...v0.3.0) (2026-05-08)
 
 
