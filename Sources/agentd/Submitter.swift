@@ -416,11 +416,7 @@ actor Submitter {
   }
 
   func localBatchStats() async -> LocalBatchStats {
-    let files = localBatchFiles()
-    return LocalBatchStats(
-      fileCount: files.count,
-      bytes: files.reduce(Int64(0)) { $0 + $1.size }
-    )
+    LocalBatchStats.collect(in: batchDirectory)
   }
 
   func localBatchSummaries() async -> [LocalBatchSummary] {
@@ -458,6 +454,32 @@ actor Submitter {
   }
 
   private func localBatchFiles() -> [LocalBatchFile] {
+    LocalBatchFile.collect(in: batchDirectory)
+  }
+
+  private func readLocalBatch(_ file: LocalBatchFile) throws -> Data {
+    let data = try Data(contentsOf: file.url)
+    guard file.encrypted else {
+      return data
+    }
+    guard let localBatchCryptor else {
+      throw LocalBatchCryptoError.invalidCiphertext
+    }
+    return try localBatchCryptor.decrypt(data)
+  }
+}
+
+private struct LocalBatchFile {
+  let url: URL
+  let modified: Date
+  let size: Int64
+  let encrypted: Bool
+
+  var batchId: String {
+    url.deletingPathExtension().lastPathComponent
+  }
+
+  static func collect(in batchDirectory: URL) -> [LocalBatchFile] {
     guard
       let urls = try? FileManager.default.contentsOfDirectory(
         at: batchDirectory,
@@ -487,28 +509,6 @@ actor Submitter {
     }
     return files
   }
-
-  private func readLocalBatch(_ file: LocalBatchFile) throws -> Data {
-    let data = try Data(contentsOf: file.url)
-    guard file.encrypted else {
-      return data
-    }
-    guard let localBatchCryptor else {
-      throw LocalBatchCryptoError.invalidCiphertext
-    }
-    return try localBatchCryptor.decrypt(data)
-  }
-}
-
-private struct LocalBatchFile {
-  let url: URL
-  let modified: Date
-  let size: Int64
-  let encrypted: Bool
-
-  var batchId: String {
-    url.deletingPathExtension().lastPathComponent
-  }
 }
 
 struct LocalBatchReplayResult: Sendable, Equatable {
@@ -519,6 +519,14 @@ struct LocalBatchReplayResult: Sendable, Equatable {
 struct LocalBatchStats: Sendable, Equatable {
   let fileCount: Int
   let bytes: Int64
+
+  static func collect(in batchDirectory: URL) -> LocalBatchStats {
+    let files = LocalBatchFile.collect(in: batchDirectory)
+    return LocalBatchStats(
+      fileCount: files.count,
+      bytes: files.reduce(Int64(0)) { $0 + $1.size }
+    )
+  }
 }
 
 struct LocalBatchSummary: Sendable, Codable, Equatable {
