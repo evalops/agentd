@@ -65,6 +65,41 @@ final class DiagnosticCLITests: XCTestCase {
     XCTAssertEqual(annotationsByName["agentd_collect_diagnostics"]?["readOnlyHint"] as? Bool, false)
   }
 
+  func testMcpResponsesAreSingleLineJSONRPCMessages() async throws {
+    let server = AgentdMCPServer(runtime: AgentdMCPRuntimeStub())
+
+    let response = try await server.handle(
+      jsonData(["jsonrpc": "2.0", "id": "tools", "method": "tools/list"]))
+
+    XCTAssertEqual(response.filter { $0 == 0x0A }.count, 1)
+    XCTAssertEqual(response.last, 0x0A)
+  }
+
+  func testMcpErrorsReturnJSONRPCResponses() async throws {
+    let server = AgentdMCPServer(runtime: AgentdMCPRuntimeStub())
+
+    let invalidParams = try await server.handle(
+      jsonData([
+        "jsonrpc": "2.0",
+        "id": "bad-window",
+        "method": "tools/call",
+        "params": [
+          "name": "agentd_activity_recent",
+          "arguments": ["window": "bad"],
+        ],
+      ]))
+    let invalidParamsRoot = try jsonObject(invalidParams)
+    let invalidParamsError = try XCTUnwrap(invalidParamsRoot["error"] as? [String: Any])
+    XCTAssertEqual(invalidParamsRoot["id"] as? String, "bad-window")
+    XCTAssertEqual(invalidParamsError["code"] as? Int, -32602)
+
+    let parseError = try await server.handle(Data("{".utf8))
+    let parseErrorRoot = try jsonObject(parseError)
+    let parseErrorBody = try XCTUnwrap(parseErrorRoot["error"] as? [String: Any])
+    XCTAssertTrue(parseErrorRoot["id"] is NSNull)
+    XCTAssertEqual(parseErrorBody["code"] as? Int, -32700)
+  }
+
   func testMcpActivityRecentReturnsRedactedActivitySummary() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }

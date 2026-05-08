@@ -185,9 +185,10 @@ enum DiagnosticsReport {
     return redact(value)
   }
 
-  private static func redactEndpoint(_ endpoint: URL) -> String {
+  static func redactEndpoint(_ endpoint: URL) -> String {
     var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
     components?.query = nil
+    components?.fragment = nil
     components?.user = nil
     components?.password = nil
     return components?.url?.absoluteString ?? "[redacted]"

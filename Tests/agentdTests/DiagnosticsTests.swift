@@ -127,4 +127,14 @@ final class DiagnosticsTests: XCTestCase {
     XCTAssertTrue(report.contains("Capture all displays: false"))
     XCTAssertTrue(report.contains("| 42 | 3024x1964 | 2.00 | true | 12 | 1 |"))
   }
+
+  func testRedactEndpointDropsUserInfoQueryAndFragment() {
+    let endpoint = URL(
+      string: "https://user:password@chronicle.example.com/submit?token=secret#fragment-secret")!
+
+    XCTAssertEqual(
+      DiagnosticsReport.redactEndpoint(endpoint),
+      "https://chronicle.example.com/submit"
+    )
+  }
 }

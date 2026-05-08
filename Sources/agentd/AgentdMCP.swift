@@ -79,7 +79,7 @@ struct SystemAgentdMCPRuntime: AgentdMCPRuntime {
       deviceId: config.deviceId,
       organizationId: config.organizationId,
       mode: config.localOnly ? "local-only" : "managed",
-      endpoint: Self.redactEndpoint(config.endpoint),
+      endpoint: DiagnosticsReport.redactEndpoint(config.endpoint),
       permissions: AgentdMCPPermissionStatus(
         accessibilityTrusted: permissions.accessibilityTrusted,
         screenCaptureTrusted: permissions.screenCaptureTrusted,
@@ -112,13 +112,6 @@ struct SystemAgentdMCPRuntime: AgentdMCPRuntime {
     )
   }
 
-  private static func redactEndpoint(_ endpoint: URL) -> String {
-    var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
-    components?.query = nil
-    components?.user = nil
-    components?.password = nil
-    return components?.url?.absoluteString ?? "[redacted]"
-  }
 }
 
 struct AgentdMCPServer {
@@ -129,24 +122,42 @@ struct AgentdMCPServer {
   }
 
   func handle(_ data: Data) async throws -> Data {
-    let request = try AgentdMCPRequest(data: data)
-    switch request.method {
-    case "initialize":
-      return try response(
+    let request: AgentdMCPRequest
+    do {
+      request = try AgentdMCPRequest(data: data)
+    } catch {
+      return try errorResponse(
+        id: AgentdMCPRequest.bestEffortId(from: data),
+        code: AgentdMCPError.jsonRPCCode(for: error),
+        message: AgentdMCPError.message(for: error)
+      )
+    }
+
+    do {
+      switch request.method {
+      case "initialize":
+        return try response(
+          id: request.id,
+          result: [
+            "protocolVersion": "2025-06-18",
+            "capabilities": ["tools": ["listChanged": false]],
+            "serverInfo": ["name": "agentd-local", "version": Bundle.main.appVersion],
+          ])
+      case "notifications/initialized":
+        return Data()
+      case "tools/list":
+        return try response(id: request.id, result: ["tools": Self.toolCatalog()])
+      case "tools/call":
+        return try await callTool(request)
+      default:
+        return try errorResponse(id: request.id, code: -32601, message: "method not found")
+      }
+    } catch {
+      return try errorResponse(
         id: request.id,
-        result: [
-          "protocolVersion": "2025-06-18",
-          "capabilities": ["tools": ["listChanged": false]],
-          "serverInfo": ["name": "agentd-local", "version": Bundle.main.appVersion],
-        ])
-    case "notifications/initialized":
-      return Data()
-    case "tools/list":
-      return try response(id: request.id, result: ["tools": Self.toolCatalog()])
-    case "tools/call":
-      return try await callTool(request)
-    default:
-      return try errorResponse(id: request.id, code: -32601, message: "method not found")
+        code: AgentdMCPError.jsonRPCCode(for: error),
+        message: AgentdMCPError.message(for: error)
+      )
     }
   }
 
@@ -282,7 +293,23 @@ struct AgentdMCPServer {
   }
 
   private static func jsonData(_ object: [String: Any]) throws -> Data {
-    try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+    try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+      + Data([0x0A])
+  }
+
+  static func fallbackErrorResponse(_ error: Error) -> Data {
+    let object: [String: Any] = [
+      "jsonrpc": "2.0",
+      "id": NSNull(),
+      "error": [
+        "code": AgentdMCPError.jsonRPCCode(for: error),
+        "message": AgentdMCPError.message(for: error),
+      ],
+    ]
+    return (try? jsonData(object))
+      ?? Data(
+        #"{"error":{"code":-32000,"message":"internal error"},"id":null,"jsonrpc":"2.0"}"#.utf8
+      )
       + Data([0x0A])
   }
 }
@@ -293,7 +320,12 @@ struct AgentdMCPRequest {
   let params: [String: Any]?
 
   init(data: Data) throws {
-    let object = try JSONSerialization.jsonObject(with: data)
+    let object: Any
+    do {
+      object = try JSONSerialization.jsonObject(with: data)
+    } catch {
+      throw AgentdMCPError.parseError
+    }
     guard let root = object as? [String: Any],
       let method = root["method"] as? String
     else {
@@ -303,16 +335,53 @@ struct AgentdMCPRequest {
     self.method = method
     self.params = root["params"] as? [String: Any]
   }
+
+  static func bestEffortId(from data: Data) -> Any? {
+    guard let object = try? JSONSerialization.jsonObject(with: data),
+      let root = object as? [String: Any]
+    else {
+      return nil
+    }
+    return root["id"]
+  }
 }
 
 enum AgentdMCPError: Error, LocalizedError {
+  case parseError
   case invalidRequest
 
   var errorDescription: String? {
     switch self {
+    case .parseError:
+      return "parse error"
     case .invalidRequest:
       return "invalid MCP JSON-RPC request"
     }
+  }
+
+  static func jsonRPCCode(for error: Error) -> Int {
+    if let mcpError = error as? AgentdMCPError {
+      switch mcpError {
+      case .parseError:
+        return -32700
+      case .invalidRequest:
+        return -32600
+      }
+    }
+    if let diagnosticError = error as? DiagnosticCLIError {
+      switch diagnosticError {
+      case .usage:
+        return -32602
+      default:
+        break
+      }
+    }
+    return -32000
+  }
+
+  static func message(for error: Error) -> String {
+    let message = error.localizedDescription
+    return message.isEmpty ? "internal error" : message
   }
 }
 
@@ -327,6 +396,7 @@ enum AgentdMCPStdio {
           FileHandle.standardOutput.write(response)
         }
       } catch {
+        FileHandle.standardOutput.write(AgentdMCPServer.fallbackErrorResponse(error))
         FileHandle.standardError.write(Data("agentd mcp: \(error.localizedDescription)\n".utf8))
       }
     }
