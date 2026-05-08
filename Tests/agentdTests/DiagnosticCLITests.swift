@@ -65,6 +65,34 @@ final class DiagnosticCLITests: XCTestCase {
     XCTAssertEqual(annotationsByName["agentd_collect_diagnostics"]?["readOnlyHint"] as? Bool, false)
   }
 
+  func testMcpConfigParserAcceptsCommandAndServerName() throws {
+    let command = try DiagnosticCommand.parse([
+      "mcp", "config", "--command", "/Applications/EvalOps agentd.app/Contents/MacOS/agentd",
+      "--server-name", "evalops-agentd",
+    ])
+
+    XCTAssertEqual(
+      command,
+      .mcpConfig(
+        AgentdMCPConfigOptions(
+          command: "/Applications/EvalOps agentd.app/Contents/MacOS/agentd",
+          serverName: "evalops-agentd"
+        ))
+    )
+  }
+
+  func testMcpClientConfigEncodesClaudeStyleServerConfig() throws {
+    let payload = AgentdMCPClientConfig(command: "/usr/local/bin/agentd", serverName: "agentd")
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let encoded = try jsonObject(encoder.encode(payload))
+    let servers = try XCTUnwrap(encoded["mcpServers"] as? [String: Any])
+    let agentd = try XCTUnwrap(servers["agentd"] as? [String: Any])
+
+    XCTAssertEqual(agentd["command"] as? String, "/usr/local/bin/agentd")
+    XCTAssertEqual(agentd["args"] as? [String], ["mcp"])
+  }
+
   func testMcpResponsesAreSingleLineJSONRPCMessages() async throws {
     let server = AgentdMCPServer(runtime: AgentdMCPRuntimeStub())
 

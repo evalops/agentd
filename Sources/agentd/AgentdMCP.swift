@@ -49,6 +49,54 @@ struct AgentdMCPDiagnosticsResult: Codable, Equatable, Sendable {
   let resourcePaths: [String]
 }
 
+struct AgentdMCPConfigOptions: Equatable {
+  var command: String?
+  var serverName = "agentd"
+
+  static func parse(_ arguments: [String]) throws -> AgentdMCPConfigOptions {
+    var options = AgentdMCPConfigOptions()
+    var index = 0
+    while index < arguments.count {
+      let flag = arguments[index]
+      switch flag {
+      case "--command":
+        index += 1
+        guard index < arguments.count, !arguments[index].isEmpty else {
+          throw DiagnosticCLIError.usage("--command requires an agentd executable path")
+        }
+        options.command = arguments[index]
+      case "--server-name":
+        index += 1
+        guard index < arguments.count, !arguments[index].isEmpty else {
+          throw DiagnosticCLIError.usage("--server-name requires a non-empty MCP server name")
+        }
+        options.serverName = arguments[index]
+      case "--help", "-h":
+        throw DiagnosticCLIError.usage("")
+      default:
+        throw DiagnosticCLIError.usage("unknown mcp config flag '\(flag)'")
+      }
+      index += 1
+    }
+    return options
+  }
+}
+
+struct AgentdMCPClientConfig: Codable, Equatable {
+  let mcpServers: [String: AgentdMCPClientServerConfig]
+
+  init(command: String, serverName: String) {
+    self.mcpServers = [
+      serverName: AgentdMCPClientServerConfig(command: command, args: ["mcp"])
+    ]
+  }
+}
+
+struct AgentdMCPClientServerConfig: Codable, Equatable {
+  let command: String
+  let args: [String]
+}
+
 protocol AgentdMCPRuntime {
   func deviceSnapshot() async throws -> AgentdMCPDeviceSnapshot
   func activityRecent(options: ActivityOptions) async throws -> ActivitySummary
