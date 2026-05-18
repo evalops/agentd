@@ -232,6 +232,7 @@ jobs:
       - name: Upload notarized artifacts
         uses: actions/upload-artifact@v4
         with:
+          retention-days: 14
           name: ${{ inputs.artifact_name }}-${{ github.sha }}
           path: |
             dist/EvalOps agentd.app
